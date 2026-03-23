@@ -3,7 +3,7 @@
     <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
 
     <p
-      v-else-if="messages.length === 0 && pendingRequests.length === 0 && !liveOverlay"
+      v-else-if="messages.length === 0 && pendingRequests.length === 0"
       class="conversation-empty"
     >
       No messages in this thread yet.
@@ -114,8 +114,22 @@
                 <p v-else class="message-text">
                   <template v-for="(segment, index) in parseInlineSegments(message.text)" :key="`seg-${index}`">
                     <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                    <a v-else-if="segment.kind === 'file'" class="message-file-link" href="#" @click.prevent>
+                    <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
+                    <a
+                      v-else-if="segment.kind === 'file'"
+                      class="message-file-link"
+                      :href="buildFileReferenceHref(segment)"
+                      @click.prevent="onFileReferenceClick(segment)"
+                    >
                       {{ segment.displayName }}
+                    </a>
+                    <a
+                      v-else-if="segment.kind === 'markdownLink'"
+                      class="message-file-link"
+                      :href="segment.href"
+                      @click.prevent="onMarkdownLinkClick(segment)"
+                    >
+                      {{ segment.label }}
                     </a>
                     <code v-else class="message-inline-code">{{ segment.value }}</code>
                   </template>
@@ -125,18 +139,35 @@
           </div>
         </div>
       </li>
-      <li v-if="liveOverlay" class="conversation-item conversation-item-overlay">
+      <li v-if="fileChanges && fileChanges.files.length > 0" class="conversation-item conversation-item-request">
         <div class="message-row">
           <div class="message-stack">
-            <article class="live-overlay-inline" aria-live="polite">
-              <p class="live-overlay-label">{{ liveOverlay.activityLabel }}</p>
-              <p
-                v-if="liveOverlay.reasoningText"
-                class="live-overlay-reasoning"
-              >
-                {{ liveOverlay.reasoningText }}
-              </p>
-              <p v-if="liveOverlay.errorText" class="live-overlay-error">{{ liveOverlay.errorText }}</p>
+            <article class="file-change-card">
+              <header class="file-change-card-header">
+                <p class="file-change-card-title">
+                  {{ fileChanges.files.length }} 个文件已更改
+                  <span class="file-change-stats-add">+{{ fileChanges.totalAdditions }}</span>
+                  <span class="file-change-stats-del">-{{ fileChanges.totalDeletions }}</span>
+                </p>
+                <button type="button" class="file-change-header-action" @click="onOpenWorkspaceDiff">
+                  完整 Diff
+                </button>
+              </header>
+              <ul class="file-change-list">
+                <li v-for="change in fileChanges.files" :key="`${fileChanges.turnId}:${change.path}`" class="file-change-item">
+                  <button
+                    type="button"
+                    class="file-change-button"
+                    @click="onOpenFileDiff(change.path, change.diff, change.additions, change.deletions)"
+                  >
+                    <span class="file-change-path">{{ displayFileChangePath(change.path) }}</span>
+                    <span class="file-change-stats">
+                      <span class="file-change-stats-add">+{{ change.additions }}</span>
+                      <span class="file-change-stats-del">-{{ change.deletions }}</span>
+                    </span>
+                  </button>
+                </li>
+              </ul>
             </article>
           </div>
         </div>
@@ -157,21 +188,25 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { ThreadScrollState, UiLiveOverlay, UiMessage, UiServerRequest } from '../../types/codex'
+import type { ThreadScrollState, UiMessage, UiServerRequest, UiTurnFileChanges } from '../../types/codex'
 import IconTablerX from '../icons/IconTablerX.vue'
 
 const props = defineProps<{
   messages: UiMessage[]
   pendingRequests: UiServerRequest[]
-  liveOverlay: UiLiveOverlay | null
   isLoading: boolean
   activeThreadId: string
+  projectCwd: string
   scrollState: ThreadScrollState | null
+  fileChanges: UiTurnFileChanges | null
 }>()
 
 const emit = defineEmits<{
   updateScrollState: [payload: { threadId: string; state: ThreadScrollState }]
   respondServerRequest: [payload: { id: number; result?: unknown; error?: { code?: number; message: string } }]
+  openFileReference: [payload: { path: string; line: number | null }]
+  openFileDiff: [payload: { path: string; diff: string; additions: number; deletions: number }]
+  openWorkspaceDiff: []
 }>()
 
 const conversationListRef = ref<HTMLElement | null>(null)
@@ -182,12 +217,15 @@ const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const BOTTOM_THRESHOLD_PX = 16
 type InlineSegment =
   | { kind: 'text'; value: string }
+  | { kind: 'bold'; value: string }
   | { kind: 'code'; value: string }
-  | { kind: 'file'; value: string; displayName: string }
+  | { kind: 'file'; value: string; displayName: string; path: string; line: number | null }
+  | { kind: 'markdownLink'; label: string; href: string; path: string; line: number | null }
 
 let scrollRestoreFrame = 0
 let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
+let shouldForceBottomOnNextRestore = false
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 
 type ParsedToolQuestion = {
@@ -216,10 +254,103 @@ function getBasename(pathValue: string): string {
   return name || pathValue
 }
 
+function normalizePathSeparators(pathValue: string): string {
+  return pathValue.replace(/\\/gu, '/')
+}
+
+function stripTrailingSlash(pathValue: string): string {
+  if (!pathValue) return pathValue
+  if (pathValue === '/') return pathValue
+  return pathValue.replace(/\/+$/u, '')
+}
+
+function toProjectRelativePath(pathValue: string): string | null {
+  const cwd = stripTrailingSlash(normalizePathSeparators(props.projectCwd.trim()))
+  if (!cwd) return null
+
+  const target = normalizePathSeparators(pathValue.trim())
+  if (!target) return null
+
+  const lowerCwd = cwd.toLowerCase()
+  const lowerTarget = target.toLowerCase()
+  const prefix = `${lowerCwd}/`
+  if (lowerTarget.startsWith(prefix)) {
+    return target.slice(cwd.length + 1)
+  }
+
+  return null
+}
+
+function formatDisplayPath(pathValue: string): string {
+  const normalized = normalizePathSeparators(pathValue.trim())
+  if (!normalized) return pathValue
+
+  if (normalized.startsWith('./')) {
+    return normalized.slice(2)
+  }
+  if (normalized.startsWith('../')) {
+    return normalized
+  }
+
+  const isAbsolute = normalized.startsWith('/') || /^[A-Za-z]:\//u.test(normalized)
+  if (!isAbsolute) return normalized
+
+  const relative = toProjectRelativePath(normalized)
+  if (relative) return relative
+  return getBasename(normalized)
+}
+
+function formatDisplayPathWithLine(pathValue: string, line: number | null): string {
+  const displayPath = formatDisplayPath(pathValue)
+  return line ? `${displayPath}:${String(line)}` : displayPath
+}
+
+function isPathLikeLabel(value: string): boolean {
+  return parseFileReference(value) !== null
+}
+
+function formatMarkdownFileLabel(label: string, pathValue: string, line: number | null): string {
+  const trimmed = stripEnclosingQuotes(label.trim())
+  if (!trimmed) return formatDisplayPathWithLine(pathValue, line)
+  if (isPathLikeLabel(trimmed)) return formatDisplayPathWithLine(pathValue, line)
+  return trimmed
+}
+
+function stripEnclosingQuotes(value: string): string {
+  let current = value.trim()
+  const quotePairs: Array<[string, string]> = [
+    ['"', '"'],
+    ["'", "'"],
+    ['`', '`'],
+    ['“', '”'],
+    ['‘', '’'],
+  ]
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [left, right] of quotePairs) {
+      if (current.length >= 2 && current.startsWith(left) && current.endsWith(right)) {
+        current = current.slice(left.length, current.length - right.length).trim()
+        changed = true
+      }
+    }
+  }
+
+  return current
+}
+
+function unwrapMarkdownLinkTarget(value: string): string {
+  const trimmed = stripEnclosingQuotes(value)
+  const markdownLinkMatch = trimmed.match(/^\[[^\]]+\]\((.+)\)$/u)
+  if (!markdownLinkMatch) return trimmed
+  return stripEnclosingQuotes(markdownLinkMatch[1].trim())
+}
+
 function parseFileReference(value: string): { path: string; line: number | null } | null {
   if (!value) return null
 
-  let pathValue = value
+  let pathValue = unwrapMarkdownLinkTarget(value)
   let line: number | null = null
 
   const hashLineMatch = pathValue.match(/^(.*)#L(\d+)(?:C\d+)?$/u)
@@ -239,8 +370,6 @@ function parseFileReference(value: string): { path: string; line: number | null 
 }
 
 function parseInlineSegments(text: string): InlineSegment[] {
-  if (!text.includes('`')) return [{ kind: 'text', value: text }]
-
   const segments: InlineSegment[] = []
   let cursor = 0
   let textStart = 0
@@ -286,14 +415,8 @@ function parseInlineSegments(text: string): InlineSegment[] {
 
     const token = text.slice(cursor + openLength, closingStart)
     if (token.length > 0) {
-      const fileReference = parseFileReference(token)
-      if (fileReference) {
-        const basename = getBasename(fileReference.path)
-        const displayName = fileReference.line ? `${basename} (line ${String(fileReference.line)})` : basename
-        segments.push({ kind: 'file', value: token, displayName })
-      } else {
-        segments.push({ kind: 'code', value: token })
-      }
+      // Backtick-wrapped segments must stay as code, even if they look like paths.
+      segments.push({ kind: 'code', value: token })
     } else {
       segments.push({ kind: 'text', value: `${delimiter}${delimiter}` })
     }
@@ -306,7 +429,110 @@ function parseInlineSegments(text: string): InlineSegment[] {
     segments.push({ kind: 'text', value: text.slice(textStart) })
   }
 
-  return segments
+  return expandMarkdownLinks(segments)
+}
+
+function parseMarkdownLinks(text: string): InlineSegment[] {
+  const parts: InlineSegment[] = []
+  const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/gu
+  let cursor = 0
+
+  while (true) {
+    const match = markdownLinkRegex.exec(text)
+    if (!match) break
+
+    const [fullMatch, labelRaw, hrefRaw] = match
+    const matchStart = match.index
+    const matchEnd = matchStart + fullMatch.length
+
+    if (matchStart > cursor) {
+      parts.push({ kind: 'text', value: text.slice(cursor, matchStart) })
+    }
+
+    const label = labelRaw.trim() || hrefRaw.trim()
+    const href = stripEnclosingQuotes(hrefRaw.trim())
+    const fileReference = parseFileReference(href)
+    if (fileReference) {
+      parts.push({
+        kind: 'markdownLink',
+        label: formatMarkdownFileLabel(label, fileReference.path, fileReference.line),
+        href: buildFileReferenceHrefFromValue(fileReference.path, fileReference.line),
+        path: fileReference.path,
+        line: fileReference.line,
+      })
+    } else {
+      parts.push({
+        kind: 'markdownLink',
+        label,
+        href,
+        path: '',
+        line: null,
+      })
+    }
+
+    cursor = matchEnd
+  }
+
+  if (cursor < text.length) {
+    parts.push({ kind: 'text', value: text.slice(cursor) })
+  }
+
+  return parts.length > 0 ? parts : [{ kind: 'text', value: text }]
+}
+
+function expandMarkdownLinks(segments: InlineSegment[]): InlineSegment[] {
+  const expanded: InlineSegment[] = []
+  for (const segment of segments) {
+    if (segment.kind === 'text') {
+      expanded.push(...expandBoldSegments(parseMarkdownLinks(segment.value)))
+      continue
+    }
+    expanded.push(segment)
+  }
+  return expanded
+}
+
+function expandBoldSegments(segments: InlineSegment[]): InlineSegment[] {
+  const expanded: InlineSegment[] = []
+  const boldRegex = /\*\*([^*]+)\*\*/gu
+
+  for (const segment of segments) {
+    if (segment.kind !== 'text') {
+      expanded.push(segment)
+      continue
+    }
+
+    const text = segment.value
+    let cursor = 0
+    let matched = false
+
+    while (true) {
+      const match = boldRegex.exec(text)
+      if (!match) break
+      matched = true
+
+      const [fullMatch, boldText] = match
+      const start = match.index
+      const end = start + fullMatch.length
+
+      if (start > cursor) {
+        expanded.push({ kind: 'text', value: text.slice(cursor, start) })
+      }
+      expanded.push({ kind: 'bold', value: boldText })
+      cursor = end
+    }
+
+    if (!matched) {
+      expanded.push(segment)
+      continue
+    }
+
+    if (cursor < text.length) {
+      expanded.push({ kind: 'text', value: text.slice(cursor) })
+    }
+  }
+
+  return expanded
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -490,6 +716,12 @@ function applySavedScrollState(): void {
   const container = conversationListRef.value
   if (!container) return
 
+  if (shouldForceBottomOnNextRestore) {
+    shouldForceBottomOnNextRestore = false
+    enforceBottomState()
+    return
+  }
+
   const savedState = props.scrollState
   if (!savedState || savedState.isAtBottom) {
     enforceBottomState()
@@ -583,17 +815,6 @@ watch(
 )
 
 watch(
-  () => props.liveOverlay,
-  async (overlay) => {
-    if (!overlay) return
-    await nextTick()
-    enforceBottomState()
-    scheduleBottomLock(8)
-  },
-  { deep: true },
-)
-
-watch(
   () => props.isLoading,
   async (loading) => {
     if (loading) return
@@ -605,6 +826,7 @@ watch(
   () => props.activeThreadId,
   () => {
     modalImageUrl.value = ''
+    shouldForceBottomOnNextRestore = true
   },
   { flush: 'post' },
 )
@@ -621,6 +843,56 @@ function openImageModal(imageUrl: string): void {
 
 function closeImageModal(): void {
   modalImageUrl.value = ''
+}
+
+function buildFileReferenceHref(segment: Extract<InlineSegment, { kind: 'file' }>): string {
+  const basePath = segment.path.trim()
+  if (!basePath) return '#'
+  return buildFileReferenceHrefFromValue(basePath, segment.line)
+}
+
+function buildFileReferenceHrefFromValue(path: string, line: number | null): string {
+  const basePath = path.trim()
+  if (!basePath) return '#'
+  return line ? `${basePath}:${String(line)}` : basePath
+}
+
+function onFileReferenceClick(segment: Extract<InlineSegment, { kind: 'file' }>): void {
+  emit('openFileReference', {
+    path: segment.path,
+    line: segment.line,
+  })
+}
+
+function onMarkdownLinkClick(segment: Extract<InlineSegment, { kind: 'markdownLink' }>): void {
+  if (segment.path) {
+    emit('openFileReference', {
+      path: segment.path,
+      line: segment.line,
+    })
+    return
+  }
+
+  if (typeof window !== 'undefined' && segment.href) {
+    window.open(segment.href, '_blank', 'noopener,noreferrer')
+  }
+}
+
+function onOpenFileDiff(path: string, diff: string, additions: number, deletions: number): void {
+  emit('openFileDiff', {
+    path,
+    diff,
+    additions,
+    deletions,
+  })
+}
+
+function onOpenWorkspaceDiff(): void {
+  emit('openWorkspaceDiff')
+}
+
+function displayFileChangePath(path: string): string {
+  return formatDisplayPath(path)
 }
 
 onBeforeUnmount(() => {
@@ -687,6 +959,50 @@ onBeforeUnmount(() => {
 
 .request-card {
   @apply w-full max-w-180 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col gap-2;
+}
+
+.file-change-card {
+  @apply w-full max-w-180 rounded-xl border border-zinc-300 bg-zinc-100 px-0 py-0 overflow-hidden;
+}
+
+.file-change-card-header {
+  @apply px-3 py-2 border-b border-zinc-300 bg-zinc-100 flex items-center justify-between gap-3;
+}
+
+.file-change-card-title {
+  @apply m-0 text-sm leading-5 text-zinc-800;
+}
+
+.file-change-header-action {
+  @apply shrink-0 text-xs leading-4 text-zinc-700 hover:text-zinc-900 underline underline-offset-2;
+}
+
+.file-change-list {
+  @apply list-none m-0 p-0;
+}
+
+.file-change-item {
+  @apply m-0 border-b border-zinc-300 last:border-b-0;
+}
+
+.file-change-button {
+  @apply w-full px-3 py-2 bg-zinc-200 text-left flex items-center justify-between gap-3 hover:bg-zinc-300 transition;
+}
+
+.file-change-path {
+  @apply text-sm leading-5 text-zinc-800 truncate;
+}
+
+.file-change-stats {
+  @apply inline-flex items-center gap-2 shrink-0;
+}
+
+.file-change-stats-add {
+  @apply text-[#16a34a] font-medium;
+}
+
+.file-change-stats-del {
+  @apply text-[#ef4444] font-medium;
 }
 
 .request-title {
@@ -795,6 +1111,10 @@ onBeforeUnmount(() => {
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
 }
 
+.message-strong-text {
+  @apply font-semibold text-slate-900;
+}
+
 .message-file-link {
   @apply text-sm leading-relaxed text-[#0969da] no-underline hover:text-[#1f6feb] hover:underline underline-offset-2;
 }
@@ -818,6 +1138,18 @@ onBeforeUnmount(() => {
 .message-card[data-role='assistant'],
 .message-card[data-role='system'] {
   @apply px-0 py-0 bg-transparent border-none rounded-none;
+}
+
+:global(html[data-theme='dark']) .message-card[data-role='user'] {
+  @apply bg-zinc-700 border border-zinc-600;
+}
+
+:global(html[data-theme='dark']) .message-card[data-role='user'] .message-text {
+  @apply text-zinc-100;
+}
+
+:global(html[data-theme='dark']) .message-card[data-role='user'] .message-inline-code {
+  @apply border-zinc-500 bg-zinc-800 text-zinc-100;
 }
 
 .conversation-item[data-message-type='worked'] .message-stack,

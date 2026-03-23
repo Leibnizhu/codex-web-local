@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import express, { type Express } from 'express'
+import compression from 'compression'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
 import { createAuthMiddleware } from './authMiddleware.js'
 
@@ -19,6 +20,17 @@ export type ServerInstance = {
 export function createServer(options: ServerOptions = {}): ServerInstance {
   const app = express()
   const bridge = createCodexBridgeMiddleware()
+
+  // Enable gzip/br compression by default, except SSE streams.
+  app.use(compression({
+    filter: (req, res) => {
+      const contentType = String(res.getHeader('Content-Type') ?? '')
+      if (contentType.includes('text/event-stream')) {
+        return false
+      }
+      return compression.filter(req, res)
+    },
+  }))
 
   // 1. Auth middleware (if password is set)
   if (options.password) {

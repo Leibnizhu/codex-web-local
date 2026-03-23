@@ -41,12 +41,12 @@
     </section>
 
     <SidebarMenuRow as="header" class="thread-tree-header-row">
-      <span class="thread-tree-header">Threads</span>
+      <span class="thread-tree-header">{{ t('threads') }}</span>
     </SidebarMenuRow>
 
-    <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">No matching threads</p>
+    <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">{{ t('noMatchingThreads') }}</p>
 
-    <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">Loading threads...</p>
+    <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">{{ t('loadingThreads') }}</p>
 
     <div v-else ref="groupsContainerRef" class="thread-tree-groups" :style="groupsContainerStyle">
       <article
@@ -103,18 +103,18 @@
                   <div v-if="isProjectMenuOpen(group.projectName)" class="project-menu-panel" @click.stop>
                     <template v-if="projectMenuMode === 'actions'">
                       <button class="project-menu-item" type="button" @click="openRenameProjectMenu(group.projectName)">
-                        Edit name
+                        {{ t('editName') }}
                       </button>
                       <button
                         class="project-menu-item project-menu-item-danger"
                         type="button"
                         @click="onRemoveProject(group.projectName)"
                       >
-                        Remove
+                        {{ t('remove') }}
                       </button>
                     </template>
                     <template v-else>
-                      <label class="project-menu-label">Project name</label>
+                      <label class="project-menu-label">{{ t('projectName') }}</label>
                       <input
                         v-model="projectRenameDraft"
                         class="project-menu-input"
@@ -184,7 +184,7 @@
             <template #left>
               <span class="project-empty-spacer" />
             </template>
-            <span class="project-empty">No threads</span>
+            <span class="project-empty">{{ t('noThreads') }}</span>
           </SidebarMenuRow>
 
           <SidebarMenuRow v-if="hasHiddenThreads(group)" class="thread-show-more-row">
@@ -192,7 +192,7 @@
               <span class="thread-show-more-spacer" />
             </template>
             <button class="thread-show-more-button" type="button" @click="toggleProjectExpansion(group.projectName)">
-              {{ isExpanded(group.projectName) ? 'Show less' : 'Show more' }}
+              {{ isExpanded(group.projectName) ? t('showLess') : t('showMore') }}
             </button>
           </SidebarMenuRow>
       </article>
@@ -220,6 +220,7 @@ const props = defineProps<{
   selectedThreadId: string
   isLoading: boolean
   searchQuery: string
+  uiLanguage?: 'zh' | 'en'
 }>()
 
 const emit = defineEmits<{
@@ -291,6 +292,32 @@ const projectGroupResizeObserver =
       })
     : null
 const COLLAPSED_STORAGE_KEY = 'codex-web-local.collapsed-projects.v1'
+const zhTexts = {
+  threads: '会话',
+  noMatchingThreads: '没有匹配的会话',
+  loadingThreads: '会话加载中...',
+  editName: '编辑名称',
+  remove: '移除',
+  projectName: '项目名称',
+  noThreads: '暂无会话',
+  showLess: '收起',
+  showMore: '展开更多',
+}
+const enTexts = {
+  threads: 'Threads',
+  noMatchingThreads: 'No matching threads',
+  loadingThreads: 'Loading threads...',
+  editName: 'Edit name',
+  remove: 'Remove',
+  projectName: 'Project name',
+  noThreads: 'No threads',
+  showLess: 'Show less',
+  showMore: 'Show more',
+}
+
+function t(key: keyof typeof zhTexts): string {
+  return props.uiLanguage === 'en' ? enTexts[key] : zhTexts[key]
+}
 
 function loadCollapsedState(): Record<string, boolean> {
   if (typeof window === 'undefined') return {}

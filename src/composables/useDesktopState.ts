@@ -3,11 +3,11 @@ import {
   archiveThread,
   getAvailableModelIds,
   getCurrentModelConfig,
+  getThreadConversationData,
   getPendingServerRequests,
   interruptThreadTurn,
   replyToServerRequest,
   getThreadGroups,
-  getThreadMessages,
   resumeThread,
   startThread,
   subscribeCodexNotifications,
@@ -23,7 +23,9 @@ import type {
   UiServerRequest,
   UiServerRequestReply,
   UiThread,
+  UiTurnFileChanges,
 } from '../types/codex'
+import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 
 function flattenThreads(groups: UiProjectGroup[]): UiThread[] {
   return groups.flatMap((group) => group.threads)
@@ -311,6 +313,10 @@ function normalizeMessageText(value: string): string {
   return value.replace(/\s+/gu, ' ').trim()
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
 function removeRedundantLiveAgentMessages(previous: UiMessage[], incoming: UiMessage[]): UiMessage[] {
   const incomingAssistantTexts = new Set(
     incoming
@@ -558,6 +564,7 @@ export function useDesktopState() {
   const turnErrorByThreadId = ref<Record<string, TurnErrorState>>({})
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
+  const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>({})
 
   const isLoadingThreads = ref(false)
   const isLoadingMessages = ref(false)
@@ -577,6 +584,8 @@ export function useDesktopState() {
   let activeReasoningItemId = ''
   let shouldAutoScrollOnNextAgentEvent = false
   const pendingTurnStartsById = new Map<string, TurnStartedInfo>()
+  let latestSelectRequestToken = 0
+  let selectThreadLoadAbortController: AbortController | null = null
 
   const allThreads = computed(() => flattenThreads(projectGroups.value))
   const selectedThread = computed(() =>
@@ -595,6 +604,11 @@ export function useDesktopState() {
       rows.push(...pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE])
     }
     return rows.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
+  })
+  const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return null
+    return latestFileChangesByThreadId.value[threadId] ?? null
   })
   const selectedLiveOverlay = computed<UiLiveOverlay | null>(() => {
     const threadId = selectedThreadId.value
@@ -723,6 +737,7 @@ export function useDesktopState() {
     turnActivityByThreadId.value = pruneThreadStateMap(turnActivityByThreadId.value, activeThreadIds)
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
+    latestFileChangesByThreadId.value = pruneThreadStateMap(latestFileChangesByThreadId.value, activeThreadIds)
     eventUnreadByThreadId.value = pruneThreadStateMap(eventUnreadByThreadId.value, activeThreadIds)
     inProgressById.value = pruneThreadStateMap(inProgressById.value, activeThreadIds)
     const nextPending: Record<string, UiServerRequest[]> = {}
@@ -973,6 +988,17 @@ export function useDesktopState() {
     if (!turn || turn.status !== 'failed') return ''
     const errorPayload = asRecord(turn.error)
     return readString(errorPayload?.message)
+  }
+
+  function readTurnDiffUpdate(notification: RpcNotification): { threadId: string; turnId: string; diff: string } | null {
+    if (notification.method !== 'turn/diff/updated') return null
+    const params = asRecord(notification.params)
+    if (!params) return null
+    const threadId = readString(params.threadId)
+    const turnId = readString(params.turnId)
+    const diff = readString(params.diff)
+    if (!threadId || !turnId) return null
+    return { threadId, turnId, diff }
   }
 
   function normalizeServerRequest(params: unknown): UiServerRequest | null {
@@ -1329,8 +1355,24 @@ export function useDesktopState() {
       setTurnSummaryForThread(startedTurn.threadId, null)
       setTurnErrorForThread(startedTurn.threadId, null)
       setThreadInProgress(startedTurn.threadId, true)
+      if (latestFileChangesByThreadId.value[startedTurn.threadId]) {
+        latestFileChangesByThreadId.value = omitKey(latestFileChangesByThreadId.value, startedTurn.threadId)
+      }
       if (eventUnreadByThreadId.value[startedTurn.threadId]) {
         eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, startedTurn.threadId)
+      }
+    }
+
+    const turnDiffUpdate = readTurnDiffUpdate(notification)
+    if (turnDiffUpdate) {
+      const normalized = normalizeTurnDiffToFileChanges(turnDiffUpdate.diff, turnDiffUpdate.turnId)
+      if (normalized) {
+        latestFileChangesByThreadId.value = {
+          ...latestFileChangesByThreadId.value,
+          [turnDiffUpdate.threadId]: normalized,
+        }
+      } else if (latestFileChangesByThreadId.value[turnDiffUpdate.threadId]) {
+        latestFileChangesByThreadId.value = omitKey(latestFileChangesByThreadId.value, turnDiffUpdate.threadId)
       }
     }
 
@@ -1508,7 +1550,7 @@ export function useDesktopState() {
     }
   }
 
-  async function loadMessages(threadId: string, options: { silent?: boolean } = {}) {
+  async function loadMessages(threadId: string, options: { silent?: boolean; signal?: AbortSignal } = {}) {
     if (!threadId) {
       return
     }
@@ -1528,12 +1570,20 @@ export function useDesktopState() {
         }
       }
 
-      const nextMessages = await getThreadMessages(threadId)
+      const { messages: nextMessages, fileChanges } = await getThreadConversationData(threadId, {
+        signal: options.signal,
+      })
       const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
       const mergedMessages = mergeMessages(previousPersisted, nextMessages, {
         preserveMissing: options.silent === true,
       })
       setPersistedMessagesForThread(threadId, mergedMessages)
+      if (fileChanges) {
+        latestFileChangesByThreadId.value = {
+          ...latestFileChangesByThreadId.value,
+          [threadId]: fileChanges,
+        }
+      }
 
       const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
       const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
@@ -1574,13 +1624,19 @@ export function useDesktopState() {
   }
 
   async function selectThread(threadId: string) {
+    const requestToken = ++latestSelectRequestToken
+    selectThreadLoadAbortController?.abort()
+    selectThreadLoadAbortController = threadId ? new AbortController() : null
     setSelectedThreadId(threadId)
+    if (!threadId) return
 
-    try {
-      await loadMessages(threadId)
-    } catch (unknownError) {
+    void loadMessages(threadId, {
+      signal: selectThreadLoadAbortController?.signal,
+    }).catch((unknownError) => {
+      if (requestToken !== latestSelectRequestToken) return
+      if (isAbortError(unknownError)) return
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
-    }
+    })
   }
 
   async function archiveThreadById(threadId: string) {
@@ -1986,6 +2042,7 @@ export function useDesktopState() {
     selectedThread,
     selectedThreadScrollState,
     selectedThreadServerRequests,
+    selectedThreadFileChanges,
     selectedLiveOverlay,
     selectedThreadId,
     availableModelIds,

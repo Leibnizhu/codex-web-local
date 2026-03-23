@@ -111,6 +111,20 @@ export type UiProjectGroup = {
   threads: UiThread[]
 }
 
+export type UiChangedFile = {
+  path: string
+  additions: number
+  deletions: number
+  diff: string
+}
+
+export type UiTurnFileChanges = {
+  turnId: string
+  files: UiChangedFile[]
+  totalAdditions: number
+  totalDeletions: number
+}
+
 export type ThreadScrollState = {
   scrollTop: number
   isAtBottom: boolean

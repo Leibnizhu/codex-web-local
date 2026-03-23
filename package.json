@@ -39,11 +39,14 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "compression": "^1.8.1",
     "commander": "^13.1.0",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "highlight.js": "^11.11.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
+    "@types/compression": "^1.8.1",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.2",
     "@vitejs/plugin-vue": "^5.2.1",

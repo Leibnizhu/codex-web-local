@@ -1,13 +1,15 @@
 <template>
   <form class="thread-composer" @submit.prevent="onSubmit">
     <div class="thread-composer-shell">
-      <input
+      <textarea
         v-model="draft"
         class="thread-composer-input"
-        type="text"
         :placeholder="placeholderText"
         :disabled="disabled || !activeThreadId || isTurnInProgress"
-        @keydown.enter.exact.prevent="onSubmit"
+        rows="1"
+        @compositionstart="onCompositionStart"
+        @compositionend="onCompositionEnd"
+        @keydown.enter.exact.prevent="onEnterKeydown"
       />
 
       <div class="thread-composer-controls">
@@ -67,6 +69,7 @@ const props = defineProps<{
   models: string[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
+  uiLanguage?: 'zh' | 'en'
   isTurnInProgress?: boolean
   isInterruptingTurn?: boolean
   disabled?: boolean
@@ -80,6 +83,7 @@ const emit = defineEmits<{
 }>()
 
 const draft = ref('')
+const isComposing = ref(false)
 const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
@@ -100,7 +104,9 @@ const canSubmit = computed(() => {
 })
 
 const placeholderText = computed(() =>
-  props.activeThreadId ? 'Type a message...' : 'Select a thread to send a message',
+  props.activeThreadId
+    ? (props.uiLanguage === 'en' ? 'Type a message...' : '输入消息...')
+    : (props.uiLanguage === 'en' ? 'Select a thread to send a message' : '请选择一个会话后再发送消息'),
 )
 
 function onSubmit(): void {
@@ -108,6 +114,20 @@ function onSubmit(): void {
   if (!text || !canSubmit.value) return
   emit('submit', text)
   draft.value = ''
+}
+
+function onCompositionStart(): void {
+  isComposing.value = true
+}
+
+function onCompositionEnd(): void {
+  isComposing.value = false
+}
+
+function onEnterKeydown(event: KeyboardEvent): void {
+  if (event.shiftKey) return
+  if (isComposing.value || event.isComposing) return
+  onSubmit()
 }
 
 function onInterrupt(): void {
@@ -142,7 +162,7 @@ watch(
 }
 
 .thread-composer-input {
-  @apply w-full min-w-0 h-11 rounded-xl border-0 bg-transparent px-1 text-sm text-zinc-900 outline-none transition;
+  @apply w-full min-w-0 min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 text-sm leading-6 text-zinc-900 outline-none transition resize-y;
 }
 
 .thread-composer-input:focus {

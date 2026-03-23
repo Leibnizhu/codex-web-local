@@ -5,7 +5,7 @@ import type {
   ThreadListResponse,
   UserInput,
 } from '../appServerDtos'
-import type { UiMessage, UiProjectGroup, UiThread } from '../../types/codex'
+import type { UiChangedFile, UiMessage, UiProjectGroup, UiThread, UiTurnFileChanges } from '../../types/codex'
 
 function toIso(seconds: number): string {
   return new Date(seconds * 1000).toISOString()
@@ -185,4 +185,124 @@ export function normalizeThreadMessagesV2(payload: ThreadReadResponse): UiMessag
     }
   }
   return messages
+}
+
+function countDiffLineStats(diff: string): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  const lines = diff.split('\n')
+  for (const line of lines) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+')) additions += 1
+    if (line.startsWith('-')) deletions += 1
+  }
+  return { additions, deletions }
+}
+
+function extractChangedFilesFromTurn(turn: { id: string; items?: ThreadItem[] }): UiTurnFileChanges | null {
+  const items = Array.isArray(turn.items) ? turn.items : []
+  const filesByPath = new Map<string, UiChangedFile>()
+
+  for (const item of items) {
+    if (item.type !== 'fileChange') continue
+    if (item.status !== 'completed') continue
+
+    for (const change of item.changes) {
+      const path = change.path
+      if (!path) continue
+      const diff = typeof change.diff === 'string' ? change.diff : ''
+      const stats = countDiffLineStats(diff)
+      const existing = filesByPath.get(path)
+      if (existing) {
+        existing.additions += stats.additions
+        existing.deletions += stats.deletions
+        existing.diff = [existing.diff, diff].filter((value) => value.length > 0).join('\n')
+      } else {
+        filesByPath.set(path, {
+          path,
+          additions: stats.additions,
+          deletions: stats.deletions,
+          diff,
+        })
+      }
+    }
+  }
+
+  const files = Array.from(filesByPath.values())
+  if (files.length === 0) return null
+
+  const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0)
+  return {
+    turnId: turn.id,
+    files,
+    totalAdditions,
+    totalDeletions,
+  }
+}
+
+export function normalizeLatestTurnFileChangesV2(payload: ThreadReadResponse): UiTurnFileChanges | null {
+  const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]
+    const changeSet = extractChangedFilesFromTurn(turn)
+    if (changeSet) {
+      return changeSet
+    }
+  }
+  return null
+}
+
+export function normalizeTurnDiffToFileChanges(diff: string, turnId: string): UiTurnFileChanges | null {
+  const raw = diff.trim()
+  if (!raw) return null
+
+  const lines = raw.split('\n')
+  const files: UiChangedFile[] = []
+
+  let currentPath = ''
+  let currentDiffLines: string[] = []
+
+  const flushCurrent = () => {
+    if (!currentPath) {
+      currentDiffLines = []
+      return
+    }
+    const fileDiff = currentDiffLines.join('\n').trim()
+    const stats = countDiffLineStats(fileDiff)
+    files.push({
+      path: currentPath,
+      additions: stats.additions,
+      deletions: stats.deletions,
+      diff: fileDiff,
+    })
+    currentPath = ''
+    currentDiffLines = []
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) {
+      flushCurrent()
+      const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/u)
+      currentPath = (match?.[2] ?? match?.[1] ?? '').trim()
+      currentDiffLines = [line]
+      continue
+    }
+
+    if (!currentPath) {
+      continue
+    }
+    currentDiffLines.push(line)
+  }
+  flushCurrent()
+
+  if (files.length === 0) return null
+  const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0)
+  return {
+    turnId,
+    files,
+    totalAdditions,
+    totalDeletions,
+  }
 }

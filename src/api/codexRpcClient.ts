@@ -21,13 +21,21 @@ type ServerRequestReplyBody = {
   }
 }
 
+type RpcCallOptions = {
+  signal?: AbortSignal
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
 }
 
-export async function rpcCall<T>(method: string, params?: unknown): Promise<T> {
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+export async function rpcCall<T>(method: string, params?: unknown, options: RpcCallOptions = {}): Promise<T> {
   const body: RpcRequestBody = { method, params: params ?? null }
 
   let response: Response
@@ -38,8 +46,12 @@ export async function rpcCall<T>(method: string, params?: unknown): Promise<T> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: options.signal,
     })
   } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
     throw new CodexApiError(
       error instanceof Error ? error.message : `RPC ${method} failed before request was sent`,
       { code: 'network_error', method },

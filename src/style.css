@@ -1,1 +1,51 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+html[data-theme='dark'] body {
+  background: #0f1115;
+  color: #e4e8ef;
+}
+
+html[data-theme='dark'] .desktop-layout {
+  background: #11151b;
+  color: #e4e8ef;
+}
+
+html[data-theme='dark'] .desktop-sidebar {
+  background: #11151b;
+}
+
+html[data-theme='dark'] .desktop-main,
+html[data-theme='dark'] .content-root {
+  background: #151a21;
+}
+
+html[data-theme='dark'] .content-code-preview,
+html[data-theme='dark'] .thread-composer-shell,
+html[data-theme='dark'] .file-change-card {
+  background: #1a212b;
+  border-color: #2a3442;
+}
+
+html[data-theme='dark'] .thread-composer-input,
+html[data-theme='dark'] .message-text,
+html[data-theme='dark'] .thread-row-title,
+html[data-theme='dark'] .content-code-preview-title,
+html[data-theme='dark'] .content-code-preview-subtitle {
+  color: #d8deea;
+}
+
+html[data-theme='dark'] .sidebar-footer-button {
+  color: #d8deea;
+}
+
+html[data-theme='dark'] .sidebar-footer-button:hover {
+  background: #1f2732;
+}

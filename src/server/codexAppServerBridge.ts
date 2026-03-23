@@ -1,8 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -71,6 +71,96 @@ function setJson(res: ServerResponse, statusCode: number, payload: unknown): voi
   res.statusCode = statusCode
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.end(JSON.stringify(payload))
+}
+
+function normalizePreviewPath(rawPath: string): string {
+  const trimmed = rawPath.trim()
+  if (!trimmed) return ''
+  if (isAbsolute(trimmed)) return resolve(trimmed)
+  return resolve(process.cwd(), trimmed)
+}
+
+function runGit(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        const message = stderr?.trim() || error.message
+        reject(new Error(message))
+        return
+      }
+      resolve(stdout)
+    })
+  })
+}
+
+type WorkspaceFileChange = {
+  path: string
+  additions: number
+  deletions: number
+  diff: string
+}
+
+function parseNumstat(output: string): Array<{ path: string; additions: number; deletions: number }> {
+  const rows: Array<{ path: string; additions: number; deletions: number }> = []
+  const lines = output.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+  for (const line of lines) {
+    const parts = line.split('\t')
+    if (parts.length < 3) continue
+    const additions = Number.parseInt(parts[0], 10)
+    const deletions = Number.parseInt(parts[1], 10)
+    rows.push({
+      path: parts.slice(2).join('\t'),
+      additions: Number.isFinite(additions) ? additions : 0,
+      deletions: Number.isFinite(deletions) ? deletions : 0,
+    })
+  }
+  return rows
+}
+
+async function collectWorkspaceChanges(cwd: string): Promise<WorkspaceFileChange[]> {
+  const targetCwd = resolve(cwd)
+  await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
+
+  const [unstagedNumstat, stagedNumstat] = await Promise.all([
+    runGit(['diff', '--numstat'], targetCwd),
+    runGit(['diff', '--cached', '--numstat'], targetCwd),
+  ])
+
+  const merged = new Map<string, WorkspaceFileChange>()
+  for (const row of [...parseNumstat(unstagedNumstat), ...parseNumstat(stagedNumstat)]) {
+    const existing = merged.get(row.path)
+    if (existing) {
+      existing.additions += row.additions
+      existing.deletions += row.deletions
+      continue
+    }
+    merged.set(row.path, {
+      path: row.path,
+      additions: row.additions,
+      deletions: row.deletions,
+      diff: '',
+    })
+  }
+
+  for (const file of merged.values()) {
+    const [stagedDiff, unstagedDiff] = await Promise.all([
+      runGit(['diff', '--cached', '--', file.path], targetCwd).catch(() => ''),
+      runGit(['diff', '--', file.path], targetCwd).catch(() => ''),
+    ])
+    file.diff = [stagedDiff.trimEnd(), unstagedDiff.trimEnd()].filter((part) => part.length > 0).join('\n')
+  }
+
+  return Array.from(merged.values()).sort((first, second) => first.path.localeCompare(second.path))
+}
+
+async function collectWorkspaceUnifiedDiff(cwd: string): Promise<string> {
+  const targetCwd = resolve(cwd)
+  await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
+  const [stagedDiff, unstagedDiff] = await Promise.all([
+    runGit(['diff', '--cached'], targetCwd).catch(() => ''),
+    runGit(['diff'], targetCwd).catch(() => ''),
+  ])
+  return [stagedDiff.trimEnd(), unstagedDiff.trimEnd()].filter((part) => part.length > 0).join('\n')
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -547,6 +637,85 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const methods = await methodCatalog.listNotificationMethods()
         setJson(res, 200, { data: methods })
         return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/file-preview') {
+        const rawPath = url.searchParams.get('path') ?? ''
+        const filePath = normalizePreviewPath(rawPath)
+        if (!filePath) {
+          setJson(res, 400, { error: 'Missing query parameter: path' })
+          return
+        }
+
+        try {
+          const fileStat = await stat(filePath)
+          if (!fileStat.isFile()) {
+            setJson(res, 400, { error: 'Target path is not a file' })
+            return
+          }
+          if (fileStat.size > 1024 * 1024) {
+            setJson(res, 413, { error: 'File too large (>1MB) for preview' })
+            return
+          }
+
+          const rawLine = url.searchParams.get('line') ?? ''
+          const parsedLine = Number.parseInt(rawLine, 10)
+          const line = Number.isFinite(parsedLine) && parsedLine > 0 ? parsedLine : null
+          const content = await readFile(filePath, 'utf8')
+          setJson(res, 200, { path: filePath, line, content })
+          return
+        } catch (error) {
+          const message = getErrorMessage(error, 'Failed to read file')
+          const statusCode = message.includes('ENOENT') ? 404 : 400
+          setJson(res, statusCode, { error: message })
+          return
+        }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/workspace-changes') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+
+        try {
+          const files = await collectWorkspaceChanges(cwd)
+          const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0)
+          const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0)
+          setJson(res, 200, {
+            files,
+            totalAdditions,
+            totalDeletions,
+          })
+          return
+        } catch (error) {
+          const message = getErrorMessage(error, 'Failed to collect workspace changes')
+          setJson(res, 200, {
+            files: [],
+            totalAdditions: 0,
+            totalDeletions: 0,
+            warning: message,
+          })
+          return
+        }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/workspace-diff') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+        try {
+          const diff = await collectWorkspaceUnifiedDiff(cwd)
+          setJson(res, 200, { diff })
+          return
+        } catch (error) {
+          const message = getErrorMessage(error, 'Failed to collect workspace diff')
+          setJson(res, 200, { diff: '', warning: message })
+          return
+        }
       }
 
       if (req.method === 'GET' && url.pathname === '/codex-api/events') {
