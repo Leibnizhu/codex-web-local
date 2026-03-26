@@ -111,29 +111,67 @@
                   <p class="worked-separator-text">{{ message.text }}</p>
                   <span class="worked-separator-line" aria-hidden="true" />
                 </div>
-                <p v-else class="message-text">
-                  <template v-for="(segment, index) in parseInlineSegments(message.text)" :key="`seg-${index}`">
-                    <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                    <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
-                    <a
-                      v-else-if="segment.kind === 'file'"
-                      class="message-file-link"
-                      :href="buildFileReferenceHref(segment)"
-                      @click.prevent="onFileReferenceClick(segment)"
-                    >
-                      {{ segment.displayName }}
-                    </a>
-                    <a
-                      v-else-if="segment.kind === 'markdownLink'"
-                      class="message-file-link"
-                      :href="segment.href"
-                      @click.prevent="onMarkdownLinkClick(segment)"
-                    >
-                      {{ segment.label }}
-                    </a>
-                    <code v-else class="message-inline-code">{{ segment.value }}</code>
+                <div v-else class="message-content">
+                  <template v-for="(block, blockIndex) in parseMessageBlocks(message.text)" :key="`block-${blockIndex}`">
+                    <template v-if="block.kind === 'text'">
+                      <template v-for="(part, partIndex) in parseTextParts(block.value)" :key="`part-${blockIndex}-${partIndex}`">
+                        <p v-if="part.kind === 'paragraph'" class="message-text">
+                          <template v-for="(segment, index) in parseInlineSegments(part.value)" :key="`seg-p-${blockIndex}-${partIndex}-${index}`">
+                            <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                            <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
+                            <a
+                              v-else-if="segment.kind === 'file'"
+                              class="message-file-link"
+                              :href="buildFileReferenceHref(segment)"
+                              @click.prevent="onFileReferenceClick(segment)"
+                            >
+                              {{ segment.displayName }}
+                            </a>
+                            <a
+                              v-else-if="segment.kind === 'markdownLink'"
+                              class="message-file-link"
+                              :href="segment.href"
+                              @click.prevent="onMarkdownLinkClick(segment)"
+                            >
+                              {{ segment.label }}
+                            </a>
+                            <code v-else class="message-inline-code">{{ segment.value }}</code>
+                          </template>
+                        </p>
+                        <ul v-else class="message-list">
+                          <li
+                            v-for="(item, itemIndex) in part.items"
+                            :key="`seg-l-${blockIndex}-${partIndex}-${itemIndex}`"
+                            class="message-list-item"
+                          >
+                            <template v-for="(segment, index) in parseInlineSegments(item)" :key="`seg-li-${blockIndex}-${partIndex}-${itemIndex}-${index}`">
+                              <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                              <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
+                              <a
+                                v-else-if="segment.kind === 'file'"
+                                class="message-file-link"
+                                :href="buildFileReferenceHref(segment)"
+                                @click.prevent="onFileReferenceClick(segment)"
+                              >
+                                {{ segment.displayName }}
+                              </a>
+                              <a
+                                v-else-if="segment.kind === 'markdownLink'"
+                                class="message-file-link"
+                                :href="segment.href"
+                                @click.prevent="onMarkdownLinkClick(segment)"
+                              >
+                                {{ segment.label }}
+                              </a>
+                              <code v-else class="message-inline-code">{{ segment.value }}</code>
+                            </template>
+                          </li>
+                        </ul>
+                      </template>
+                    </template>
+                    <pre v-else class="message-code-block"><code class="message-code-body">{{ block.value }}</code></pre>
                   </template>
-                </p>
+                </div>
               </article>
             </article>
           </div>
@@ -221,6 +259,12 @@ type InlineSegment =
   | { kind: 'code'; value: string }
   | { kind: 'file'; value: string; displayName: string; path: string; line: number | null }
   | { kind: 'markdownLink'; label: string; href: string; path: string; line: number | null }
+type MessageBlock =
+  | { kind: 'text'; value: string }
+  | { kind: 'code'; value: string; language: string }
+type TextPart =
+  | { kind: 'paragraph'; value: string }
+  | { kind: 'list'; items: string[] }
 
 let scrollRestoreFrame = 0
 let bottomLockFrame = 0
@@ -430,6 +474,95 @@ function parseInlineSegments(text: string): InlineSegment[] {
   }
 
   return expandMarkdownLinks(segments)
+}
+
+function parseMessageBlocks(text: string): MessageBlock[] {
+  const normalizedText = text.replace(/\r\n/gu, '\n')
+  if (!normalizedText.includes('```')) {
+    return [{ kind: 'text', value: text }]
+  }
+
+  const blocks: MessageBlock[] = []
+  const fencedRegex = /(^|\n)```([^\n`]*)\n([\s\S]*?)\n```(?=\n|$)/gu
+  let cursor = 0
+
+  while (true) {
+    const match = fencedRegex.exec(normalizedText)
+    if (!match) break
+
+    const fullMatch = match[0] || ''
+    const prefix = match[1] || ''
+    const infoString = (match[2] || '').trim()
+    const codeContent = match[3] || ''
+    const matchStart = match.index + prefix.length
+    const matchEnd = matchStart + fullMatch.length
+
+    if (matchStart > cursor) {
+      blocks.push({ kind: 'text', value: normalizedText.slice(cursor, matchStart) })
+    }
+
+    const language = infoString.split(/\s+/u)[0] || ''
+    blocks.push({
+      kind: 'code',
+      value: codeContent.replace(/\r?\n$/u, ''),
+      language,
+    })
+
+    cursor = matchEnd
+  }
+
+  if (cursor < normalizedText.length) {
+    blocks.push({ kind: 'text', value: normalizedText.slice(cursor) })
+  }
+
+  return blocks.length > 0 ? blocks : [{ kind: 'text', value: normalizedText }]
+}
+
+function parseTextParts(text: string): TextPart[] {
+  const lines = text.split('\n')
+  const parts: TextPart[] = []
+  let paragraphBuffer: string[] = []
+  let listBuffer: string[] = []
+
+  const flushParagraph = (): void => {
+    if (paragraphBuffer.length === 0) return
+    const value = paragraphBuffer.join('\n').trim()
+    paragraphBuffer = []
+    if (value) {
+      parts.push({ kind: 'paragraph', value })
+    }
+  }
+
+  const flushList = (): void => {
+    if (listBuffer.length === 0) return
+    const items = listBuffer.map((item) => item.trim()).filter((item) => item.length > 0)
+    listBuffer = []
+    if (items.length > 0) {
+      parts.push({ kind: 'list', items })
+    }
+  }
+
+  for (const line of lines) {
+    const listMatch = line.match(/^\s*-\s+(.+)$/u)
+    if (listMatch) {
+      flushParagraph()
+      listBuffer.push(listMatch[1])
+      continue
+    }
+
+    if (line.trim().length === 0) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+
+    flushList()
+    paragraphBuffer.push(line)
+  }
+
+  flushParagraph()
+  flushList()
+  return parts
 }
 
 function parseMarkdownLinks(text: string): InlineSegment[] {
@@ -1107,8 +1240,29 @@ onBeforeUnmount(() => {
   @apply m-0 text-sm leading-relaxed whitespace-pre-wrap text-slate-800;
 }
 
+.message-content {
+  @apply flex flex-col gap-2;
+}
+
+.message-list {
+  @apply m-0 pl-5 list-disc text-sm leading-relaxed text-slate-800;
+}
+
+.message-list-item {
+  @apply m-0;
+}
+
 .message-inline-code {
   @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+}
+
+.message-code-block {
+  @apply m-0 rounded-lg border border-slate-200 bg-slate-950 px-3 py-2 overflow-x-auto;
+}
+
+.message-code-body {
+  @apply block whitespace-pre text-xs leading-5 text-slate-100;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 .message-strong-text {

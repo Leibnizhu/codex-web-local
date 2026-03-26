@@ -211,10 +211,10 @@
                       v-for="(line, index) in renderableFilePreviewLines"
                       :key="`fline:${previewPanel.payload.path}:${index}:${line.oldLine ?? 'n'}:${line.newLine ?? 'n'}`"
                       class="diff-line"
-                      :class="`diff-line-${line.kind}`"
+                      :class="[ `diff-line-${line.kind}`, filePreviewHasDiff ? '' : 'code-line-single' ]"
                     >
                       <span class="diff-ln-old">{{ line.oldLine ?? '' }}</span>
-                      <span class="diff-ln-new">{{ line.newLine ?? '' }}</span>
+                      <span v-if="filePreviewHasDiff" class="diff-ln-new">{{ line.newLine ?? '' }}</span>
                       <span class="hljs code-line-text" v-html="line.html || '&nbsp;'"></span>
                     </div>
                   </div>
@@ -457,7 +457,7 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
     return highlightedLines.map((lineHtml, index) => ({
       kind: 'ctx',
       oldLine: index + 1,
-      newLine: index + 1,
+      newLine: null,
       html: lineHtml,
     }))
   }
@@ -497,6 +497,12 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
   }
 
   return rendered
+})
+const filePreviewHasDiff = computed(() => {
+  const preview = previewPanel.value
+  if (!preview || preview.kind !== 'file') return false
+  const change = findTurnFileChangeByPath(preview.payload.path)
+  return Boolean(change && change.diff && change.diff.trim().length > 0)
 })
 const previewPanelTitle = computed(() => {
   const preview = previewPanel.value
@@ -1520,6 +1526,10 @@ async function submitFirstMessageForNewThread(text: string): Promise<void> {
 .diff-line {
   @apply grid items-start;
   grid-template-columns: 44px 44px minmax(0, 1fr);
+}
+
+.code-line-single {
+  grid-template-columns: 44px minmax(0, 1fr);
 }
 
 .diff-line-add {
