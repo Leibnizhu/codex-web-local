@@ -435,7 +435,7 @@ function buildTurnSummaryMessage(summary: TurnSummaryState): UiMessage {
   return {
     id: `turn-summary:${summary.turnId}`,
     role: 'system',
-    text: `Worked for ${formatTurnDuration(summary.durationMs)}`,
+    text: formatTurnDuration(summary.durationMs),
     messageType: WORKED_MESSAGE_TYPE,
   }
 }
@@ -658,10 +658,8 @@ export function useDesktopState() {
     selectedReasoningEffort.value = effort
   }
 
-  function buildPendingTurnDetails(modelId: string, effort: ReasoningEffort | ''): string[] {
-    const modelLabel = modelId.trim() || 'default'
-    const effortLabel = effort || 'default'
-    return [`Model: ${modelLabel}`, `Thinking: ${effortLabel}`]
+  function buildPendingTurnDetails(): string[] {
+    return []
   }
 
   async function refreshModelPreferences(): Promise<void> {
@@ -1570,7 +1568,7 @@ export function useDesktopState() {
         }
       }
 
-      const { messages: nextMessages, fileChanges } = await getThreadConversationData(threadId, {
+      const { messages: nextMessages, fileChanges, inProgress } = await getThreadConversationData(threadId, {
         signal: options.signal,
       })
       const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
@@ -1588,6 +1586,7 @@ export function useDesktopState() {
       const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
       const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
       setLiveAgentMessagesForThread(threadId, nextLiveAgent)
+      setThreadInProgress(threadId, inProgress)
 
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -1663,7 +1662,7 @@ export function useDesktopState() {
     setTurnSummaryForThread(threadId, null)
     setTurnActivityForThread(
       threadId,
-      { label: 'Thinking', details: buildPendingTurnDetails(selectedModelId.value, selectedReasoningEffort.value) },
+      { label: 'Thinking', details: buildPendingTurnDetails() },
     )
     setTurnErrorForThread(threadId, null)
     setThreadInProgress(threadId, true)
@@ -1706,7 +1705,7 @@ export function useDesktopState() {
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(
         threadId,
-        { label: 'Thinking', details: buildPendingTurnDetails(selectedModelId.value, selectedReasoningEffort.value) },
+        { label: 'Thinking', details: buildPendingTurnDetails() },
       )
       setTurnErrorForThread(threadId, null)
       setThreadInProgress(threadId, true)

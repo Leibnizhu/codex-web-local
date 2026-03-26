@@ -1,12 +1,12 @@
 <template>
   <section class="conversation-root">
-    <p v-if="isLoading" class="conversation-loading">Loading messages...</p>
+    <p v-if="isLoading" class="conversation-loading">{{ t('threadConversation.loadingMessages') }}</p>
 
     <p
       v-else-if="messages.length === 0 && pendingRequests.length === 0"
       class="conversation-empty"
     >
-      No messages in this thread yet.
+      {{ t('threadConversation.noMessages') }}
     </p>
 
     <ul v-else ref="conversationListRef" class="conversation-list" @scroll="onConversationScroll">
@@ -19,22 +19,22 @@
           <div class="message-stack">
             <article class="request-card">
               <p class="request-title">{{ request.method }}</p>
-              <p class="request-meta">Request #{{ request.id }} · {{ formatIsoTime(request.receivedAtIso) }}</p>
+              <p class="request-meta">{{ t('threadConversation.requestMeta', { id: request.id, time: formatIsoTime(request.receivedAtIso) }) }}</p>
 
               <p v-if="readRequestReason(request)" class="request-reason">{{ readRequestReason(request) }}</p>
 
               <section v-if="request.method === 'item/commandExecution/requestApproval'" class="request-actions">
-                <button type="button" class="request-button request-button-primary" @click="onRespondApproval(request.id, 'accept')">Accept</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'acceptForSession')">Accept for Session</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'decline')">Decline</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'cancel')">Cancel</button>
+                <button type="button" class="request-button request-button-primary" @click="onRespondApproval(request.id, 'accept')">{{ t('threadConversation.accept') }}</button>
+                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'acceptForSession')">{{ t('threadConversation.acceptForSession') }}</button>
+                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'decline')">{{ t('threadConversation.decline') }}</button>
+                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'cancel')">{{ t('threadConversation.cancel') }}</button>
               </section>
 
               <section v-else-if="request.method === 'item/fileChange/requestApproval'" class="request-actions">
-                <button type="button" class="request-button request-button-primary" @click="onRespondApproval(request.id, 'accept')">Accept</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'acceptForSession')">Accept for Session</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'decline')">Decline</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'cancel')">Cancel</button>
+                <button type="button" class="request-button request-button-primary" @click="onRespondApproval(request.id, 'accept')">{{ t('threadConversation.accept') }}</button>
+                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'acceptForSession')">{{ t('threadConversation.acceptForSession') }}</button>
+                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'decline')">{{ t('threadConversation.decline') }}</button>
+                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'cancel')">{{ t('threadConversation.cancel') }}</button>
               </section>
 
               <section v-else-if="request.method === 'item/tool/requestUserInput'" class="request-user-input">
@@ -59,24 +59,24 @@
                     class="request-input"
                     type="text"
                     :value="readQuestionOtherAnswer(request.id, question.id)"
-                    placeholder="Other answer"
+                    :placeholder="t('threadConversation.otherAnswer')"
                     @input="onQuestionOtherAnswerInput(request.id, question.id, $event)"
                   />
                 </div>
 
                 <button type="button" class="request-button request-button-primary" @click="onRespondToolRequestUserInput(request)">
-                  Submit Answers
+                  {{ t('threadConversation.submitAnswers') }}
                 </button>
               </section>
 
               <section v-else-if="request.method === 'item/tool/call'" class="request-actions">
-                <button type="button" class="request-button request-button-primary" @click="onRespondToolCallFailure(request.id)">Fail Tool Call</button>
-                <button type="button" class="request-button" @click="onRespondToolCallSuccess(request.id)">Success (Empty)</button>
+                <button type="button" class="request-button request-button-primary" @click="onRespondToolCallFailure(request.id)">{{ t('threadConversation.failToolCall') }}</button>
+                <button type="button" class="request-button" @click="onRespondToolCallSuccess(request.id)">{{ t('threadConversation.successEmpty') }}</button>
               </section>
 
               <section v-else class="request-actions">
-                <button type="button" class="request-button request-button-primary" @click="onRespondEmptyResult(request.id)">Return Empty Result</button>
-                <button type="button" class="request-button" @click="onRejectUnknownRequest(request.id)">Reject Request</button>
+                <button type="button" class="request-button request-button-primary" @click="onRespondEmptyResult(request.id)">{{ t('threadConversation.returnEmptyResult') }}</button>
+                <button type="button" class="request-button" @click="onRejectUnknownRequest(request.id)">{{ t('threadConversation.rejectRequest') }}</button>
               </section>
             </article>
           </div>
@@ -108,7 +108,7 @@
               <article v-if="message.text.length > 0" class="message-card" :data-role="message.role">
                 <div v-if="message.messageType === 'worked'" class="worked-separator" aria-live="polite">
                   <span class="worked-separator-line" aria-hidden="true" />
-                  <p class="worked-separator-text">{{ message.text }}</p>
+                  <p class="worked-separator-text">{{ formatWorkedMessage(message.text) }}</p>
                   <span class="worked-separator-line" aria-hidden="true" />
                 </div>
                 <div v-else class="message-content">
@@ -225,8 +225,9 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ThreadScrollState, UiMessage, UiServerRequest, UiTurnFileChanges } from '../../types/codex'
+import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 import IconTablerX from '../icons/IconTablerX.vue'
 
 const props = defineProps<{
@@ -237,6 +238,8 @@ const props = defineProps<{
   projectCwd: string
   scrollState: ThreadScrollState | null
   fileChanges: UiTurnFileChanges | null
+  uiLanguage?: UiLanguage
+  isThinkingIndicatorVisible?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -271,6 +274,11 @@ let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
 let shouldForceBottomOnNextRestore = false
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
+const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
+
+function t(key: UiTextKey, params?: Record<string, number | string>): string {
+  return tUi(normalizedLanguage.value, key, params)
+}
 
 type ParsedToolQuestion = {
   id: string
@@ -563,6 +571,23 @@ function parseTextParts(text: string): TextPart[] {
   flushParagraph()
   flushList()
   return parts
+}
+
+function extractWorkedDuration(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return '<1s'
+  if (trimmed.toLowerCase().startsWith('worked for ')) {
+    return trimmed.slice('worked for '.length).trim() || '<1s'
+  }
+  if (trimmed.startsWith('耗时')) {
+    return trimmed.slice(2).trim() || '<1s'
+  }
+  return trimmed
+}
+
+function formatWorkedMessage(text: string): string {
+  const duration = extractWorkedDuration(text)
+  return t('threadConversation.workedFor', { duration })
 }
 
 function parseMarkdownLinks(text: string): InlineSegment[] {
@@ -951,6 +976,14 @@ watch(
   () => props.isLoading,
   async (loading) => {
     if (loading) return
+    await scheduleScrollRestore()
+  },
+)
+
+watch(
+  () => props.isThinkingIndicatorVisible,
+  async () => {
+    if (props.isLoading) return
     await scheduleScrollRestore()
   },
 )

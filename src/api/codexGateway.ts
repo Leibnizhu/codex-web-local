@@ -15,7 +15,12 @@ import type {
   ThreadReadResponse,
 } from './appServerDtos'
 import { normalizeCodexApiError } from './codexErrors'
-import { normalizeLatestTurnFileChangesV2, normalizeThreadGroupsV2, normalizeThreadMessagesV2 } from './normalizers/v2'
+import {
+  normalizeLatestTurnFileChangesV2,
+  normalizeThreadGroupsV2,
+  normalizeThreadInProgressV2,
+  normalizeThreadMessagesV2,
+} from './normalizers/v2'
 import type { UiMessage, UiProjectGroup, UiTurnFileChanges } from '../types/codex'
 
 type CurrentModelConfig = {
@@ -75,7 +80,7 @@ async function getThreadMessagesV2(threadId: string): Promise<UiMessage[]> {
 async function getThreadConversationDataV2(
   threadId: string,
   options: RpcCallOptions = {},
-): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null }> {
+): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null; inProgress: boolean }> {
   const payload = await callRpc<ThreadReadResponse>('thread/read', {
     threadId,
     includeTurns: true,
@@ -83,6 +88,7 @@ async function getThreadConversationDataV2(
   return {
     messages: normalizeThreadMessagesV2(payload),
     fileChanges: normalizeLatestTurnFileChangesV2(payload),
+    inProgress: normalizeThreadInProgressV2(payload),
   }
 }
 
@@ -105,7 +111,7 @@ export async function getThreadMessages(threadId: string): Promise<UiMessage[]> 
 export async function getThreadConversationData(
   threadId: string,
   options: RpcCallOptions = {},
-): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null }> {
+): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null; inProgress: boolean }> {
   try {
     return await getThreadConversationDataV2(threadId, options)
   } catch (error) {

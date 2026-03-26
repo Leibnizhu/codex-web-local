@@ -187,6 +187,13 @@ export function normalizeThreadMessagesV2(payload: ThreadReadResponse): UiMessag
   return messages
 }
 
+export function normalizeThreadInProgressV2(payload: ThreadReadResponse): boolean {
+  const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
+  const latestTurn = turns.at(-1)
+  if (!latestTurn || typeof latestTurn.status !== 'string') return false
+  return latestTurn.status === 'inProgress'
+}
+
 function countDiffLineStats(diff: string): { additions: number; deletions: number } {
   let additions = 0
   let deletions = 0

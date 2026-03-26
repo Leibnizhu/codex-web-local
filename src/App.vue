@@ -8,6 +8,7 @@
           :is-sidebar-collapsed="isSidebarCollapsed"
           :is-auto-refresh-enabled="isAutoRefreshEnabled"
           :auto-refresh-button-label="autoRefreshButtonLabel"
+          :ui-language="uiLanguage"
           :show-new-thread-button="true"
           @toggle-sidebar="setSidebarCollapsed(!isSidebarCollapsed)"
           @toggle-auto-refresh="onToggleAutoRefreshTimer"
@@ -17,8 +18,8 @@
             class="sidebar-search-toggle"
             type="button"
             :aria-pressed="isSidebarSearchVisible"
-            aria-label="Search threads"
-            title="Search threads"
+            :aria-label="t('app.searchThreads')"
+            :title="t('app.searchThreads')"
             @click="toggleSidebarSearch"
           >
             <IconTablerSearch class="sidebar-search-toggle-icon" />
@@ -32,14 +33,14 @@
             v-model="sidebarSearchQuery"
             class="sidebar-search-input"
             type="text"
-            placeholder="Filter threads..."
+            :placeholder="t('app.filterThreads')"
             @keydown="onSidebarSearchKeydown"
           />
           <button
             v-if="sidebarSearchQuery.length > 0"
             class="sidebar-search-clear"
             type="button"
-            aria-label="Clear search"
+            :aria-label="t('app.clearSearch')"
             @click="clearSidebarSearch"
           >
             <IconTablerX class="sidebar-search-clear-icon" />
@@ -88,6 +89,7 @@
               :is-sidebar-collapsed="isSidebarCollapsed"
               :is-auto-refresh-enabled="isAutoRefreshEnabled"
               :auto-refresh-button-label="autoRefreshButtonLabel"
+              :ui-language="uiLanguage"
               :show-new-thread-button="true"
               @toggle-sidebar="setSidebarCollapsed(!isSidebarCollapsed)"
               @toggle-auto-refresh="onToggleAutoRefreshTimer"
@@ -113,9 +115,9 @@
           <template v-if="isHomeRoute">
             <div class="content-grid">
               <div class="new-thread-empty">
-                <p class="new-thread-hero">Let's build</p>
+                <p class="new-thread-hero">{{ t('app.letsBuild') }}</p>
                 <ComposerDropdown class="new-thread-folder-dropdown" :model-value="newThreadCwd"
-                  :options="newThreadFolderOptions" placeholder="Choose folder"
+                  :options="newThreadFolderOptions" :placeholder="t('app.chooseFolder')"
                   :disabled="newThreadFolderOptions.length === 0" @update:model-value="onSelectNewThreadFolder" />
               </div>
 
@@ -134,6 +136,8 @@
                   :active-thread-id="composerThreadContextId" :scroll-state="selectedThreadScrollState"
                   :project-cwd="selectedThread?.cwd ?? ''"
                   :file-changes="selectedThreadFileChanges"
+                  :ui-language="uiLanguage"
+                  :is-thinking-indicator-visible="isThinkingIndicatorVisible"
                   :pending-requests="selectedThreadServerRequests"
                   @update-scroll-state="onUpdateThreadScrollState"
                   @respond-server-request="onRespondServerRequest"
@@ -151,7 +155,7 @@
                   <button
                     class="content-code-preview-close"
                     type="button"
-                    aria-label="Close code preview"
+                    :aria-label="t('app.closeCodePreview')"
                     @click="onCloseFilePreview"
                   >
                     <IconTablerX class="content-code-preview-close-icon" />
@@ -268,6 +272,7 @@ import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerX from './components/icons/IconTablerX.vue'
 import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
+import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
 import type { ReasoningEffort, ThreadScrollState, UiTurnFileChanges } from './types/codex'
 import { fetchFilePreview, fetchWorkspaceChanges, type FilePreviewPayload } from './api/codexGateway'
 import hljs from 'highlight.js/lib/common'
@@ -276,7 +281,6 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const UI_THEME_STORAGE_KEY = 'codex-web-local.ui-theme.v1'
 const UI_LANGUAGE_STORAGE_KEY = 'codex-web-local.ui-language.v1'
 type ThemeMode = 'light' | 'dark' | 'auto'
-type UiLanguage = 'zh' | 'en'
 
 const {
   projectGroups,
@@ -323,6 +327,9 @@ const newThreadCwd = ref('')
 const isSidebarCollapsed = ref(loadSidebarCollapsed())
 const uiTheme = ref<ThemeMode>(loadUiTheme())
 const uiLanguage = ref<UiLanguage>(loadUiLanguage())
+function t(key: UiTextKey, params?: Record<string, number | string>): string {
+  return tUi(uiLanguage.value, key, params)
+}
 const sidebarSearchQuery = ref('')
 const isSidebarSearchVisible = ref(false)
 const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
@@ -363,44 +370,49 @@ const knownThreadIdSet = computed(() => {
 
 const isHomeRoute = computed(() => route.name === 'home')
 const contentTitle = computed(() => {
-  if (isHomeRoute.value) return uiLanguage.value === 'zh' ? '新会话' : 'New thread'
-  return selectedThread.value?.title ?? (uiLanguage.value === 'zh' ? '选择一个会话' : 'Choose a thread')
+  if (isHomeRoute.value) return t('app.newThread')
+  return selectedThread.value?.title ?? t('app.chooseThread')
 })
 const autoRefreshButtonLabel = computed(() =>
   isAutoRefreshEnabled.value
-    ? (uiLanguage.value === 'zh'
-        ? `${String(autoRefreshSecondsLeft.value)} 秒后自动刷新`
-        : `Auto refresh in ${String(autoRefreshSecondsLeft.value)}s`)
-    : (uiLanguage.value === 'zh' ? '开启 4 秒自动刷新' : 'Enable 4s refresh'),
+    ? t('app.autoRefreshIn', { seconds: autoRefreshSecondsLeft.value })
+    : t('app.enableAutoRefresh'),
 )
 const themeToggleLabel = computed(() => {
-  if (uiLanguage.value === 'zh') {
-    if (uiTheme.value === 'light') return '主题：浅色'
-    if (uiTheme.value === 'dark') return '主题：深色'
-    return '主题：自动'
-  }
-  if (uiTheme.value === 'light') return 'Theme: Light'
-  if (uiTheme.value === 'dark') return 'Theme: Dark'
-  return 'Theme: Auto'
+  if (uiTheme.value === 'light') return t('app.themeLight')
+  if (uiTheme.value === 'dark') return t('app.themeDark')
+  return t('app.themeAuto')
 })
 const languageToggleLabel = computed(() =>
-  uiLanguage.value === 'zh' ? '语言：中文' : 'Language: English',
+  uiLanguage.value === 'zh' ? t('app.languageChinese') : t('app.languageEnglish'),
 )
 const languageToggleMark = computed(() =>
   uiLanguage.value === 'zh' ? '中' : 'EN',
 )
-const thinkingIndicatorLabel = computed(() =>
-  uiLanguage.value === 'zh' ? 'AI思考中' : 'AI thinking',
-)
+function normalizeActivityText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/gu, ' ')
+}
+function isTransientActivityText(value: string): boolean {
+  const normalized = normalizeActivityText(value)
+  return normalized === 'thinking' || normalized === 'writing response' || normalized === 'waiting response'
+}
 const liveOverlay = computed(() => selectedLiveOverlay.value)
+const thinkingIndicatorLabel = computed(() => {
+  const activityLabel = normalizeActivityText(liveOverlay.value?.activityLabel ?? '')
+  if (activityLabel === 'writing response') {
+    return t('app.aiGenerating')
+  }
+  return t('app.aiThinking')
+})
 const thinkingIndicatorDetail = computed(() => {
   const overlay = liveOverlay.value
   if (!overlay) return ''
-  if (overlay.errorText) return overlay.errorText
   if (overlay.reasoningText) return overlay.reasoningText
-  const details = overlay.activityDetails.filter((item) => item.trim().length > 0)
+  const details = overlay.activityDetails.filter((item) =>
+    item.trim().length > 0 && !isTransientActivityText(item),
+  )
   if (details.length > 0) return details.join(' · ')
-  if (overlay.activityLabel && overlay.activityLabel.trim().toLowerCase() !== 'thinking') {
+  if (overlay.activityLabel && !isTransientActivityText(overlay.activityLabel)) {
     return overlay.activityLabel
   }
   return ''

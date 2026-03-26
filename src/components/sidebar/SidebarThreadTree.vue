@@ -12,7 +12,7 @@
             <template #left>
               <span class="thread-left-stack">
                 <span v-if="thread.inProgress || thread.unread" class="thread-status-indicator" :data-state="getThreadState(thread)" />
-                <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
+                <button class="thread-pin-button" type="button" :title="t('sidebarTree.pin')" @click="togglePin(thread.id)">
                   <IconTablerPin class="thread-icon" />
                 </button>
               </span>
@@ -28,10 +28,10 @@
                 class="thread-archive-button"
                 :data-confirm="archiveConfirmThreadId === thread.id"
                 type="button"
-                title="archive_thread"
+                :title="t('sidebarTree.archiveThread')"
                 @click="onArchiveClick(thread.id)"
               >
-                <span v-if="archiveConfirmThreadId === thread.id">confirm</span>
+                <span v-if="archiveConfirmThreadId === thread.id">{{ t('sidebarTree.confirm') }}</span>
                 <IconTablerArchive v-else class="thread-icon" />
               </button>
             </template>
@@ -41,12 +41,12 @@
     </section>
 
     <SidebarMenuRow as="header" class="thread-tree-header-row">
-      <span class="thread-tree-header">{{ t('threads') }}</span>
+      <span class="thread-tree-header">{{ t('sidebarTree.threads') }}</span>
     </SidebarMenuRow>
 
-    <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">{{ t('noMatchingThreads') }}</p>
+    <p v-if="isSearchActive && filteredGroups.length === 0" class="thread-tree-no-results">{{ t('sidebarTree.noMatchingThreads') }}</p>
 
-    <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">{{ t('loadingThreads') }}</p>
+    <p v-else-if="isLoading && groups.length === 0" class="thread-tree-loading">{{ t('sidebarTree.loadingThreads') }}</p>
 
     <div v-else ref="groupsContainerRef" class="thread-tree-groups" :style="groupsContainerStyle">
       <article
@@ -94,7 +94,7 @@
                   <button
                     class="project-menu-trigger"
                     type="button"
-                    title="project_menu"
+                    :title="t('sidebarTree.projectMenu')"
                     @click.stop="toggleProjectMenu(group.projectName)"
                   >
                     <IconTablerDots class="thread-icon" />
@@ -103,18 +103,18 @@
                   <div v-if="isProjectMenuOpen(group.projectName)" class="project-menu-panel" @click.stop>
                     <template v-if="projectMenuMode === 'actions'">
                       <button class="project-menu-item" type="button" @click="openRenameProjectMenu(group.projectName)">
-                        {{ t('editName') }}
+                        {{ t('sidebarTree.editName') }}
                       </button>
                       <button
                         class="project-menu-item project-menu-item-danger"
                         type="button"
                         @click="onRemoveProject(group.projectName)"
                       >
-                        {{ t('remove') }}
+                        {{ t('sidebarTree.remove') }}
                       </button>
                     </template>
                     <template v-else>
-                      <label class="project-menu-label">{{ t('projectName') }}</label>
+                      <label class="project-menu-label">{{ t('sidebarTree.projectName') }}</label>
                       <input
                         v-model="projectRenameDraft"
                         class="project-menu-input"
@@ -153,7 +153,7 @@
                       class="thread-status-indicator"
                       :data-state="getThreadState(thread)"
                     />
-                    <button class="thread-pin-button" type="button" title="pin" @click="togglePin(thread.id)">
+                    <button class="thread-pin-button" type="button" :title="t('sidebarTree.pin')" @click="togglePin(thread.id)">
                       <IconTablerPin class="thread-icon" />
                     </button>
                   </span>
@@ -169,10 +169,10 @@
                     class="thread-archive-button"
                     :data-confirm="archiveConfirmThreadId === thread.id"
                     type="button"
-                    title="archive_thread"
+                    :title="t('sidebarTree.archiveThread')"
                     @click="onArchiveClick(thread.id)"
                   >
-                    <span v-if="archiveConfirmThreadId === thread.id">confirm</span>
+                    <span v-if="archiveConfirmThreadId === thread.id">{{ t('sidebarTree.confirm') }}</span>
                     <IconTablerArchive v-else class="thread-icon" />
                   </button>
                 </template>
@@ -184,7 +184,7 @@
             <template #left>
               <span class="project-empty-spacer" />
             </template>
-            <span class="project-empty">{{ t('noThreads') }}</span>
+            <span class="project-empty">{{ t('sidebarTree.noThreads') }}</span>
           </SidebarMenuRow>
 
           <SidebarMenuRow v-if="hasHiddenThreads(group)" class="thread-show-more-row">
@@ -192,7 +192,7 @@
               <span class="thread-show-more-spacer" />
             </template>
             <button class="thread-show-more-button" type="button" @click="toggleProjectExpansion(group.projectName)">
-              {{ isExpanded(group.projectName) ? t('showLess') : t('showMore') }}
+              {{ isExpanded(group.projectName) ? t('sidebarTree.showLess') : t('sidebarTree.showMore') }}
             </button>
           </SidebarMenuRow>
       </article>
@@ -204,6 +204,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import type { UiProjectGroup, UiThread } from '../../types/codex'
+import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 import IconTablerArchive from '../icons/IconTablerArchive.vue'
 import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconTablerChevronRight from '../icons/IconTablerChevronRight.vue'
@@ -220,7 +221,7 @@ const props = defineProps<{
   selectedThreadId: string
   isLoading: boolean
   searchQuery: string
-  uiLanguage?: 'zh' | 'en'
+  uiLanguage?: UiLanguage
 }>()
 
 const emit = defineEmits<{
@@ -292,31 +293,10 @@ const projectGroupResizeObserver =
       })
     : null
 const COLLAPSED_STORAGE_KEY = 'codex-web-local.collapsed-projects.v1'
-const zhTexts = {
-  threads: '会话',
-  noMatchingThreads: '没有匹配的会话',
-  loadingThreads: '会话加载中...',
-  editName: '编辑名称',
-  remove: '移除',
-  projectName: '项目名称',
-  noThreads: '暂无会话',
-  showLess: '收起',
-  showMore: '展开更多',
-}
-const enTexts = {
-  threads: 'Threads',
-  noMatchingThreads: 'No matching threads',
-  loadingThreads: 'Loading threads...',
-  editName: 'Edit name',
-  remove: 'Remove',
-  projectName: 'Project name',
-  noThreads: 'No threads',
-  showLess: 'Show less',
-  showMore: 'Show more',
-}
+const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
 
-function t(key: keyof typeof zhTexts): string {
-  return props.uiLanguage === 'en' ? enTexts[key] : zhTexts[key]
+function t(key: UiTextKey, params?: Record<string, number | string>): string {
+  return tUi(normalizedLanguage.value, key, params)
 }
 
 function loadCollapsedState(): Record<string, boolean> {
@@ -440,10 +420,10 @@ const groupsContainerStyle = computed<Record<string, string>>(() => {
 
 function formatRelative(value: string): string {
   const timestamp = new Date(value).getTime()
-  if (Number.isNaN(timestamp)) return 'n/a'
+  if (Number.isNaN(timestamp)) return t('sidebarTree.na')
 
   const diffMs = Math.abs(Date.now() - timestamp)
-  if (diffMs < 60000) return 'now'
+  if (diffMs < 60000) return t('sidebarTree.now')
 
   const minutes = Math.floor(diffMs / 60000)
   if (minutes < 60) return `${minutes}m`
@@ -484,7 +464,9 @@ function onArchiveClick(threadId: string): void {
 }
 
 function getNewThreadButtonAriaLabel(projectName: string): string {
-  return `start new thread ${getProjectDisplayName(projectName)}`
+  return t('sidebarTree.newThreadInProject', {
+    projectName: getProjectDisplayName(projectName),
+  })
 }
 
 function onStartNewThread(projectName: string): void {

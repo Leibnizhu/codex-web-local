@@ -3,8 +3,8 @@
     <button
       class="sidebar-thread-controls-button"
       type="button"
-      :aria-label="isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
-      :title="isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+      :aria-label="sidebarToggleLabel"
+      :title="sidebarToggleLabel"
       @click="$emit('toggle-sidebar')"
     >
       <IconTablerLayoutSidebarFilled v-if="isSidebarCollapsed" class="sidebar-thread-controls-icon" />
@@ -28,8 +28,8 @@
       v-if="showNewThreadButton"
       class="sidebar-thread-controls-button"
       type="button"
-      aria-label="Start new thread"
-      title="Start new thread"
+      :aria-label="t('sidebar.startNewThread')"
+      :title="t('sidebar.startNewThread')"
       @click="$emit('start-new-thread')"
     >
       <IconTablerFilePencil class="sidebar-thread-controls-icon" />
@@ -38,16 +38,19 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerLayoutSidebar from '../icons/IconTablerLayoutSidebar.vue'
 import IconTablerLayoutSidebarFilled from '../icons/IconTablerLayoutSidebarFilled.vue'
 import IconTablerRefresh from '../icons/IconTablerRefresh.vue'
 
-defineProps<{
+const props = defineProps<{
   isSidebarCollapsed: boolean
   isAutoRefreshEnabled: boolean
   autoRefreshButtonLabel: string
   showNewThreadButton?: boolean
+  uiLanguage?: UiLanguage
 }>()
 
 defineEmits<{
@@ -55,6 +58,16 @@ defineEmits<{
   'toggle-auto-refresh': []
   'start-new-thread': []
 }>()
+
+const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
+
+function t(key: UiTextKey, params?: Record<string, number | string>): string {
+  return tUi(normalizedLanguage.value, key, params)
+}
+
+const sidebarToggleLabel = computed(() =>
+  props.isSidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse'),
+)
 </script>
 
 <style scoped>

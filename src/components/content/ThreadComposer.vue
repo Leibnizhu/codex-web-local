@@ -17,9 +17,11 @@
           class="thread-composer-control"
           :model-value="selectedModel"
           :options="modelOptions"
-          placeholder="Model"
+          :placeholder="tUi(normalizedLanguage, 'composer.model')"
+          menu-width="model"
+          :show-option-icons="false"
           open-direction="up"
-          :disabled="disabled || !activeThreadId || models.length === 0 || isTurnInProgress"
+          :disabled="disabled || !activeThreadId || models.length === 0"
           @update:model-value="onModelSelect"
         />
 
@@ -27,7 +29,9 @@
           class="thread-composer-control"
           :model-value="selectedReasoningEffort"
           :options="reasoningOptions"
-          placeholder="Thinking"
+          :placeholder="tUi(normalizedLanguage, 'composer.thinking')"
+          :menu-title="reasoningLabel"
+          :trigger-title="reasoningLabel"
           open-direction="up"
           :disabled="disabled || !activeThreadId || isTurnInProgress"
           @update:model-value="onReasoningEffortSelect"
@@ -58,10 +62,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import type { ReasoningEffort } from '../../types/codex'
+import { tUi, type UiLanguage } from '../../i18n/uiText'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
+import IconTablerBrain from '../icons/IconTablerBrain.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
+import IconTablerSettings from '../icons/IconTablerSettings.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 
 const props = defineProps<{
@@ -69,7 +76,7 @@ const props = defineProps<{
   models: string[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
-  uiLanguage?: 'zh' | 'en'
+  uiLanguage?: UiLanguage
   isTurnInProgress?: boolean
   isInterruptingTurn?: boolean
   disabled?: boolean
@@ -84,16 +91,46 @@ const emit = defineEmits<{
 
 const draft = ref('')
 const isComposing = ref(false)
-const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
-  { value: 'none', label: 'None' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra high' },
-]
+const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
+const reasoningOptions = computed<Array<{ value: ReasoningEffort; label: string; icon?: Component; iconProps?: Record<string, unknown> }>>(() => {
+  return [
+    { value: 'none', label: tUi(normalizedLanguage.value, 'composer.reasoning.none'), icon: IconTablerBrain, iconProps: { level: 0 } },
+    { value: 'minimal', label: tUi(normalizedLanguage.value, 'composer.reasoning.minimal'), icon: IconTablerBrain, iconProps: { level: 1 } },
+    { value: 'low', label: tUi(normalizedLanguage.value, 'composer.reasoning.low'), icon: IconTablerBrain, iconProps: { level: 2 } },
+    { value: 'medium', label: tUi(normalizedLanguage.value, 'composer.reasoning.medium'), icon: IconTablerBrain, iconProps: { level: 3 } },
+    { value: 'high', label: tUi(normalizedLanguage.value, 'composer.reasoning.high'), icon: IconTablerBrain, iconProps: { level: 4 } },
+    { value: 'xhigh', label: tUi(normalizedLanguage.value, 'composer.reasoning.xhigh'), icon: IconTablerBrain, iconProps: { level: 5 } },
+  ]
+})
+
+function toDisplayModelName(modelId: string): string {
+  const normalized = modelId.trim().toLowerCase()
+  if (!normalized) return modelId
+
+  const knownLabels: Record<string, string> = {
+    'gpt-5.4': 'GPT-5.4',
+    'gpt-5.4-mini': 'GPT-5.4-Mini',
+    'gpt-5.3-codex': 'GPT-5.3-Codex',
+    'gpt-5.2-codex': 'GPT-5.2-Codex',
+    'gpt-5.2': 'GPT-5.2',
+    'gpt-5.1-codex-max': 'GPT-5.1-Codex-Max',
+    'gpt-5.1-codex-mini': 'GPT-5.1-Codex-Mini',
+  }
+  const mapped = knownLabels[normalized]
+  if (mapped) return mapped
+
+  return modelId
+}
+
 const modelOptions = computed(() =>
-  props.models.map((modelId) => ({ value: modelId, label: modelId })),
+  props.models.map((modelId) => ({
+    value: modelId,
+    label: toDisplayModelName(modelId),
+    icon: IconTablerSettings,
+  })),
+)
+const reasoningLabel = computed(() =>
+  tUi(normalizedLanguage.value, 'composer.reasoningEffort'),
 )
 
 const canSubmit = computed(() => {
@@ -105,8 +142,8 @@ const canSubmit = computed(() => {
 
 const placeholderText = computed(() =>
   props.activeThreadId
-    ? (props.uiLanguage === 'en' ? 'Type a message...' : '输入消息...')
-    : (props.uiLanguage === 'en' ? 'Select a thread to send a message' : '请选择一个会话后再发送消息'),
+    ? tUi(normalizedLanguage.value, 'composer.typeMessage')
+    : tUi(normalizedLanguage.value, 'composer.selectThreadFirst'),
 )
 
 function onSubmit(): void {
