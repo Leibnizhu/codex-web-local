@@ -382,6 +382,7 @@ type RenderableCodeLine = {
 }
 const previewPanel = ref<PreviewPanelState | null>(null)
 const workspaceDiffTotals = ref({ additions: 0, deletions: 0 })
+const isCreatingThreadFromHome = ref(false)
 
 const routeThreadId = computed(() => {
   const rawThreadId = route.params.threadId
@@ -1217,7 +1218,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
 
   try {
     if (route.name === 'home') {
-      if (selectedThreadId.value !== '') {
+      if (selectedThreadId.value !== '' && !isSendingMessage.value && !isCreatingThreadFromHome.value) {
         await selectThread('')
       }
       return
@@ -1227,8 +1228,7 @@ async function syncThreadSelectionWithRoute(): Promise<void> {
       const threadId = routeThreadId.value
       if (!threadId) return
 
-      if (!knownThreadIdSet.value.has(threadId)) {
-        await router.replace({ name: 'home' })
+      if (!knownThreadIdSet.value.has(threadId) && selectedThreadId.value !== threadId) {
         return
       }
 
@@ -1323,12 +1323,15 @@ watch(
 )
 
 async function submitFirstMessageForNewThread(text: string): Promise<void> {
+  isCreatingThreadFromHome.value = true
   try {
     const threadId = await sendMessageToNewThread(text, newThreadCwd.value)
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
   } catch {
     // Error is already reflected in state.
+  } finally {
+    isCreatingThreadFromHome.value = false
   }
 }
 </script>

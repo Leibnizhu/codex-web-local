@@ -16,6 +16,7 @@ import {
   startThreadTurn,
   type RpcNotification,
 } from '../api/codexGateway'
+import { CodexApiError } from '../api/codexErrors'
 import type {
   UiRateLimitUsage,
   UiThreadContextUsage,
@@ -45,9 +46,23 @@ const CONTEXT_USAGE_STORAGE_KEY = 'codex-web-local.thread-context-usage.v2'
 const RATE_LIMIT_USAGE_STORAGE_KEY = 'codex-web-local.rate-limit-usage.v1'
 const EVENT_SYNC_DEBOUNCE_MS = 220
 const AUTO_REFRESH_INTERVAL_MS = 4000
+const THREAD_LIST_AUTO_REFRESH_INTERVAL_MS = 30000
+const RATE_LIMIT_REFRESH_MIN_INTERVAL_MS = 30000
+const NEW_THREAD_SELECTION_HOLD_MS = 20000
+const RESUME_RETRY_ATTEMPTS = 3
+const RESUME_RETRY_BASE_DELAY_MS = 900
+const ARCHIVE_RETRY_ATTEMPTS = 3
+const ARCHIVE_RETRY_BASE_DELAY_MS = 1200
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const TOKEN_USAGE_DEBUG_ENABLED = true
+const THREAD_LIST_REFRESH_METHODS = new Set([
+  'thread/started',
+  'thread/name/updated',
+  'thread/compacted',
+  'thread/archived',
+  'thread/unarchived',
+])
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -682,6 +697,36 @@ function mergeThreadGroups(
   return areGroupArraysEqual(previous, mergedGroups) ? previous : mergedGroups
 }
 
+function isNoRolloutError(error: unknown): error is CodexApiError {
+  if (!(error instanceof CodexApiError)) return false
+  if (error.status !== 502) return false
+  return error.message.toLowerCase().includes('no rollout found for thread id')
+}
+
+function isResumeNoRolloutError(error: unknown): error is CodexApiError {
+  if (!(error instanceof CodexApiError)) return false
+  if (error.method !== 'thread/resume') return false
+  return isNoRolloutError(error)
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function deriveProjectNameFromCwd(cwd: string): string {
+  const parts = cwd.split('/').filter(Boolean)
+  return parts.at(-1) || cwd || 'unknown-project'
+}
+
+function buildOptimisticThreadTitle(text: string): string {
+  const normalized = normalizeMessageText(text)
+  if (normalized.length === 0) return 'New thread'
+  if (normalized.length <= 44) return normalized
+  return `${normalized.slice(0, 44)}...`
+}
+
 export function useDesktopState() {
   const projectGroups = ref<UiProjectGroup[]>([])
   const sourceGroups = ref<UiProjectGroup[]>([])
@@ -732,6 +777,10 @@ export function useDesktopState() {
   const pendingTurnStartsById = new Map<string, TurnStartedInfo>()
   let latestSelectRequestToken = 0
   let selectThreadLoadAbortController: AbortController | null = null
+  let lastThreadListRefreshAtMs = 0
+  let lastRateLimitRefreshAtMs = 0
+  const pendingNewThreadSelectionUntilById = new Map<string, number>()
+  const optimisticThreadById = new Map<string, UiThread>()
 
   const allThreads = computed(() => flattenThreads(projectGroups.value))
   const selectedThread = computed(() =>
@@ -807,6 +856,143 @@ export function useDesktopState() {
     saveSelectedThreadId(nextThreadId)
     activeReasoningItemId = ''
     shouldAutoScrollOnNextAgentEvent = false
+  }
+
+  function holdNewThreadSelection(threadId: string): void {
+    if (!threadId) return
+    pendingNewThreadSelectionUntilById.set(threadId, Date.now() + NEW_THREAD_SELECTION_HOLD_MS)
+  }
+
+  function consumeObservedThreadSelection(threadId: string): void {
+    if (!threadId) return
+    if (!pendingNewThreadSelectionUntilById.has(threadId)) return
+    pendingNewThreadSelectionUntilById.delete(threadId)
+  }
+
+  function shouldKeepMissingSelectedThread(threadId: string, nowMs: number): boolean {
+    const holdUntilMs = pendingNewThreadSelectionUntilById.get(threadId)
+    if (holdUntilMs === undefined) return false
+    if (holdUntilMs <= nowMs) {
+      pendingNewThreadSelectionUntilById.delete(threadId)
+      return false
+    }
+    return true
+  }
+
+  function clearExpiredThreadSelectionHolds(nowMs: number): void {
+    for (const [threadId, holdUntilMs] of pendingNewThreadSelectionUntilById.entries()) {
+      if (holdUntilMs <= nowMs) {
+        pendingNewThreadSelectionUntilById.delete(threadId)
+      }
+    }
+  }
+
+  function mergeOptimisticThreads(baseGroups: UiProjectGroup[]): UiProjectGroup[] {
+    if (optimisticThreadById.size === 0) return baseGroups
+
+    const nextGroups = baseGroups.map((group) => ({
+      projectName: group.projectName,
+      threads: [...group.threads],
+    }))
+    const groupsByName = new Map(nextGroups.map((group) => [group.projectName, group]))
+    const existingThreadIds = new Set(flattenThreads(nextGroups).map((thread) => thread.id))
+
+    for (const optimisticThread of optimisticThreadById.values()) {
+      if (existingThreadIds.has(optimisticThread.id)) continue
+      existingThreadIds.add(optimisticThread.id)
+
+      const existingGroup = groupsByName.get(optimisticThread.projectName)
+      if (existingGroup) {
+        existingGroup.threads.unshift(optimisticThread)
+      } else {
+        const newGroup: UiProjectGroup = {
+          projectName: optimisticThread.projectName,
+          threads: [optimisticThread],
+        }
+        nextGroups.push(newGroup)
+        groupsByName.set(newGroup.projectName, newGroup)
+      }
+    }
+
+    for (const group of nextGroups) {
+      group.threads.sort((first, second) => second.updatedAtIso.localeCompare(first.updatedAtIso))
+    }
+
+    return nextGroups
+  }
+
+  function removeMaterializedOptimisticThreads(serverGroups: UiProjectGroup[]): void {
+    if (optimisticThreadById.size === 0) return
+    const serverThreadIds = new Set(flattenThreads(serverGroups).map((thread) => thread.id))
+    for (const threadId of serverThreadIds) {
+      if (optimisticThreadById.has(threadId)) {
+        optimisticThreadById.delete(threadId)
+      }
+    }
+  }
+
+  function addOptimisticThread(threadId: string, cwd: string, text: string): void {
+    if (!threadId) return
+    const nowIso = new Date().toISOString()
+    const trimmedCwd = cwd.trim()
+    const optimisticThread: UiThread = {
+      id: threadId,
+      title: buildOptimisticThreadTitle(text),
+      projectName: deriveProjectNameFromCwd(trimmedCwd),
+      cwd: trimmedCwd,
+      branch: '',
+      createdAtIso: nowIso,
+      updatedAtIso: nowIso,
+      preview: normalizeMessageText(text),
+      unread: false,
+      inProgress: true,
+    }
+    optimisticThreadById.set(threadId, optimisticThread)
+
+    if (optimisticThread.projectName && !projectOrder.value.includes(optimisticThread.projectName)) {
+      projectOrder.value = [...projectOrder.value, optimisticThread.projectName]
+      saveProjectOrder(projectOrder.value)
+    }
+
+    sourceGroups.value = mergeThreadGroups(sourceGroups.value, mergeOptimisticThreads(sourceGroups.value))
+    applyThreadFlags()
+  }
+
+  async function resumeThreadWithRetry(threadId: string): Promise<boolean> {
+    for (let attempt = 1; attempt <= RESUME_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        await resumeThread(threadId)
+        return true
+      } catch (error) {
+        if (!isResumeNoRolloutError(error)) {
+          throw error
+        }
+        if (attempt >= RESUME_RETRY_ATTEMPTS) {
+          return false
+        }
+        const nextDelay = RESUME_RETRY_BASE_DELAY_MS * attempt
+        await delayMs(nextDelay)
+      }
+    }
+    return false
+  }
+
+  async function archiveThreadWithRetry(threadId: string): Promise<void> {
+    for (let attempt = 1; attempt <= ARCHIVE_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        await archiveThread(threadId)
+        optimisticThreadById.delete(threadId)
+        return
+      } catch (error) {
+        if (!isNoRolloutError(error)) {
+          throw error
+        }
+        if (attempt >= ARCHIVE_RETRY_ATTEMPTS) {
+          throw error
+        }
+        await delayMs(ARCHIVE_RETRY_BASE_DELAY_MS * attempt)
+      }
+    }
   }
 
   function setSelectedModelId(modelId: string): void {
@@ -918,10 +1104,16 @@ export function useDesktopState() {
     }
   }
 
-  async function refreshRateLimitUsage(): Promise<void> {
+  async function refreshRateLimitUsage(options: { force?: boolean } = {}): Promise<void> {
+    const force = options.force === true
+    const now = Date.now()
+    if (!force && now - lastRateLimitRefreshAtMs < RATE_LIMIT_REFRESH_MIN_INTERVAL_MS) {
+      return
+    }
     try {
       rateLimitUsage.value = await getAccountRateLimitSnapshot()
       saveRateLimitUsage(rateLimitUsage.value)
+      lastRateLimitRefreshAtMs = now
     } catch {
       // Keep existing rate-limit snapshot on transient failures.
     }
@@ -1815,19 +2007,28 @@ export function useDesktopState() {
 
   }
 
+  function shouldQueueMessageRefresh(notification: RpcNotification): boolean {
+    const method = notification.method
+    return method === 'turn/completed' || method === 'thread/compacted'
+  }
+
+  function shouldQueueThreadListRefresh(method: string): boolean {
+    return THREAD_LIST_REFRESH_METHODS.has(method)
+  }
+
   function queueEventDrivenSync(notification: RpcNotification): void {
     const threadId = extractThreadIdFromNotification(notification)
-    if (threadId) {
+    if (threadId && shouldQueueMessageRefresh(notification)) {
       pendingThreadMessageRefresh.add(threadId)
     }
 
     const method = notification.method
-    if (
-      method.startsWith('thread/') ||
-      method.startsWith('turn/') ||
-      method.startsWith('item/')
-    ) {
+    if (shouldQueueThreadListRefresh(method)) {
       pendingThreadsRefresh = true
+    }
+
+    if (!pendingThreadsRefresh && pendingThreadMessageRefresh.size === 0) {
+      return
     }
 
     if (eventSyncTimer !== null || typeof window === 'undefined') return
@@ -1852,20 +2053,31 @@ export function useDesktopState() {
       }
 
       const orderedGroups = orderGroupsByProjectOrder(groups, projectOrder.value)
-      sourceGroups.value = mergeThreadGroups(sourceGroups.value, orderedGroups)
+      removeMaterializedOptimisticThreads(orderedGroups)
+      const groupsWithOptimistic = mergeOptimisticThreads(orderedGroups)
+      sourceGroups.value = mergeThreadGroups(sourceGroups.value, groupsWithOptimistic)
       inProgressById.value = pruneThreadStateMap(
         inProgressById.value,
         new Set(flattenThreads(sourceGroups.value).map((thread) => thread.id)),
       )
       applyThreadFlags()
       hasLoadedThreads.value = true
+      lastThreadListRefreshAtMs = Date.now()
 
       const flatThreads = flattenThreads(projectGroups.value)
       pruneThreadScopedState(flatThreads)
+      const nowMs = Date.now()
+      clearExpiredThreadSelectionHolds(nowMs)
 
       const currentExists = flatThreads.some((thread) => thread.id === selectedThreadId.value)
+      if (currentExists) {
+        consumeObservedThreadSelection(selectedThreadId.value)
+      }
 
       if (!currentExists) {
+        if (shouldKeepMissingSelectedThread(selectedThreadId.value, nowMs)) {
+          return
+        }
         setSelectedThreadId(flatThreads[0]?.id ?? '')
       }
     } finally {
@@ -1885,11 +2097,14 @@ export function useDesktopState() {
     }
 
     try {
-      if (resumedThreadById.value[threadId] !== true) {
-        await resumeThread(threadId)
-        resumedThreadById.value = {
-          ...resumedThreadById.value,
-          [threadId]: true,
+      const requiresInitialResume = resumedThreadById.value[threadId] !== true
+      if (requiresInitialResume) {
+        const resumed = await resumeThreadWithRetry(threadId)
+        if (resumed) {
+          resumedThreadById.value = {
+            ...resumedThreadById.value,
+            [threadId]: true,
+          }
         }
       }
 
@@ -1926,6 +2141,10 @@ export function useDesktopState() {
         }
       }
       markThreadAsRead(threadId)
+
+      if (requiresInitialResume && !allThreads.value.some((thread) => thread.id === threadId)) {
+        await loadThreads()
+      }
     } finally {
       if (shouldShowLoading) {
         isLoadingMessages.value = false
@@ -1940,7 +2159,7 @@ export function useDesktopState() {
       await Promise.all([
         loadThreads(),
         refreshModelPreferences(),
-        refreshRateLimitUsage(),
+        refreshRateLimitUsage({ force: true }),
       ])
       await loadMessages(selectedThreadId.value)
     } catch (unknownError) {
@@ -1966,13 +2185,17 @@ export function useDesktopState() {
 
   async function archiveThreadById(threadId: string) {
     try {
-      await archiveThread(threadId)
+      await archiveThreadWithRetry(threadId)
       await loadThreads()
 
       if (selectedThreadId.value === threadId) {
         await loadMessages(selectedThreadId.value)
       }
     } catch (unknownError) {
+      if (isNoRolloutError(unknownError)) {
+        error.value = '线程刚创建完成，归档尚未就绪，请稍后再试'
+        return
+      }
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     }
   }
@@ -1996,6 +2219,11 @@ export function useDesktopState() {
     )
     setTurnErrorForThread(threadId, null)
     setThreadInProgress(threadId, true)
+    setThreadScrollState(threadId, {
+      scrollTop: 0,
+      isAtBottom: true,
+      scrollRatio: 1,
+    })
 
     try {
       await startTurnForThread(threadId, nextText)
@@ -2026,11 +2254,9 @@ export function useDesktopState() {
       threadId = await startThread(targetCwd || undefined, selectedModel || undefined)
       if (!threadId) return ''
 
-      resumedThreadById.value = {
-        ...resumedThreadById.value,
-        [threadId]: true,
-      }
+      addOptimisticThread(threadId, targetCwd, nextText)
       setSelectedThreadId(threadId)
+      holdNewThreadSelection(threadId)
       shouldAutoScrollOnNextAgentEvent = true
       setTurnSummaryForThread(threadId, null)
       setTurnActivityForThread(
@@ -2039,8 +2265,16 @@ export function useDesktopState() {
       )
       setTurnErrorForThread(threadId, null)
       setThreadInProgress(threadId, true)
+      setThreadScrollState(threadId, {
+        scrollTop: 0,
+        isAtBottom: true,
+        scrollRatio: 1,
+      })
 
       await startTurnForThread(threadId, nextText)
+      pendingThreadMessageRefresh.add(threadId)
+      pendingThreadsRefresh = true
+      await syncFromNotifications()
       return threadId
     } catch (unknownError) {
       shouldAutoScrollOnNextAgentEvent = false
@@ -2064,8 +2298,9 @@ export function useDesktopState() {
     const reasoningEffort = selectedReasoningEffort.value
 
     try {
-      if (resumedThreadById.value[threadId] !== true) {
-        await resumeThread(threadId)
+      const requiresInitialResume = resumedThreadById.value[threadId] !== true
+      if (requiresInitialResume) {
+        await resumeThreadWithRetry(threadId)
       }
 
       await startThreadTurn(
@@ -2081,7 +2316,9 @@ export function useDesktopState() {
       }
 
       pendingThreadMessageRefresh.add(threadId)
-      pendingThreadsRefresh = true
+      if (requiresInitialResume) {
+        pendingThreadsRefresh = true
+      }
       await syncFromNotifications()
       void dispatchNextQueuedMessage(threadId)
     } catch (unknownError) {
@@ -2106,7 +2343,6 @@ export function useDesktopState() {
         activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
       }
       pendingThreadMessageRefresh.add(threadId)
-      pendingThreadsRefresh = true
       await syncFromNotifications()
     } catch (unknownError) {
       const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to interrupt active turn'
@@ -2206,7 +2442,11 @@ export function useDesktopState() {
     isPolling.value = true
 
     try {
-      await loadThreads()
+      const now = Date.now()
+      const shouldRefreshThreadList = now - lastThreadListRefreshAtMs >= THREAD_LIST_AUTO_REFRESH_INTERVAL_MS
+      if (shouldRefreshThreadList) {
+        await loadThreads()
+      }
 
       if (!selectedThreadId.value) return
 
@@ -2214,9 +2454,8 @@ export function useDesktopState() {
       const currentVersion = currentThreadVersion(threadId)
       const loadedVersion = loadedVersionByThreadId.value[threadId] ?? ''
       const hasVersionChange = currentVersion.length > 0 && currentVersion !== loadedVersion
-      const isInProgress = inProgressById.value[threadId] === true
 
-      if (isInProgress || hasVersionChange) {
+      if (hasVersionChange) {
         await loadMessages(threadId, { silent: true })
       }
     } catch {
@@ -2253,12 +2492,8 @@ export function useDesktopState() {
       if (!activeThreadId) return
 
       const isActiveDirty = threadIdsToRefresh.has(activeThreadId)
-      const isInProgress = inProgressById.value[activeThreadId] === true
-      const currentVersion = currentThreadVersion(activeThreadId)
-      const loadedVersion = loadedVersionByThreadId.value[activeThreadId] ?? ''
-      const hasVersionChange = currentVersion.length > 0 && currentVersion !== loadedVersion
 
-      if (isActiveDirty || isInProgress || hasVersionChange || shouldRefreshThreads) {
+      if (isActiveDirty) {
         await loadMessages(activeThreadId, { silent: true })
       }
     } catch {

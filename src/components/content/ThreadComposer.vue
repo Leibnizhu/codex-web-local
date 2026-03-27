@@ -108,7 +108,7 @@
         </div>
 
         <button
-          v-if="isTurnInProgress"
+          v-if="shouldShowStopButton"
           class="thread-composer-stop"
           type="button"
           aria-label="Стоп"
@@ -118,6 +118,7 @@
           <IconTablerPlayerStopFilled class="thread-composer-stop-icon" />
         </button>
         <button
+          v-else
           class="thread-composer-submit"
           type="submit"
           aria-label="Send message"
@@ -347,6 +348,9 @@ const canSubmit = computed(() => {
   if (!props.activeThreadId) return false
   return draft.value.trim().length > 0
 })
+const shouldShowStopButton = computed(() =>
+  props.isTurnInProgress === true && draft.value.trim().length === 0,
+)
 
 const placeholderText = computed(() =>
   props.activeThreadId
@@ -509,7 +513,7 @@ watch(
 }
 
 .thread-composer-status-popover {
-  @apply pointer-events-none invisible absolute bottom-8 right-0 z-20 w-54 rounded-xl border border-zinc-200 bg-white p-2 text-[11px] text-zinc-700 opacity-0 shadow-md transition;
+  @apply pointer-events-none invisible absolute bottom-full right-0 z-20 w-54 rounded-xl border border-zinc-200 bg-white p-2 text-[11px] text-zinc-700 opacity-0 shadow-md transition;
 }
 
 .thread-composer-status-popover-context {
