@@ -60,6 +60,16 @@ npm run dev -- --host 0.0.0.0 --daemon
 
 默认开启密码保护时，服务会在控制台打印密码。浏览器打开 URL 后输入密码即可访问。
 
+## 界面与交互更新
+
+- 输入框底部状态区新增：
+  - 当前 git 分支
+  - context window 用量圆环（hover 显示详细信息）
+  - 剩余额度悬浮卡片
+- context 悬浮卡片支持手动“立即压缩”（调用 `thread/compact/start`）。
+- 左侧线程列表以 `name` 作为主标题，`preview` 通过 tooltip 展示，不再在 hover 时行内展开。
+- AI 响应期间仍可继续输入；点击发送后会进入等待队列，当前轮结束后自动发送。
+
 ## 守护进程说明
 
 - `codex-web-local --daemon` 会让 CLI 服务在后台运行，并打印 `PID`。

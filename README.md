@@ -60,6 +60,16 @@ npm run dev -- --host 0.0.0.0 --daemon
 
 When started with password protection (default), the server prints the password to the console. Open the URL in your browser, enter the password, and you're in.
 
+## UI Highlights
+
+- Composer status bar now shows:
+  - current git branch
+  - context window usage ring with detailed hover info
+  - remaining quota hover card
+- Context hover card supports manual compaction via "Compact Now" (calls `thread/compact/start`).
+- Thread list uses `name` as the primary title. `preview` is shown in tooltip, not inline on hover.
+- You can continue typing while the model is still responding. New sends are queued and auto-sent after the current turn finishes.
+
 ## Daemon Notes
 
 - `codex-web-local --daemon` runs the CLI server in background and prints `PID`.
