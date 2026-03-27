@@ -82,7 +82,7 @@ kill <PID>
 
 ## 贡献
 
-欢迎提交 issue 和 PR。如果你有想法、建议或发现了 bug，欢迎在 [GitHub 仓库](https://github.com/pavel-voronin/codex-web-local/issues) 提交反馈。
+欢迎提交 issue 和 PR。如果你有想法、建议或发现了 bug，欢迎在 [GitHub 仓库](https://github.com/Leibnizhu/codex-web-local/issues) 提交反馈。
 
 ## 许可证
 

@@ -4,14 +4,14 @@
   "description": "A lightweight web interface for Codex that runs on top of the Codex app-server, allowing remote access from any browser",
   "type": "module",
   "license": "MIT",
-  "author": "Pavel Voronin",
+  "author": "Leibniz Hu",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pavel-voronin/codex-web-local.git"
+    "url": "git+https://github.com/Leibnizhu/codex-web-local.git"
   },
-  "homepage": "https://github.com/pavel-voronin/codex-web-local#readme",
+  "homepage": "https://github.com/Leibnizhu/codex-web-local#readme",
   "bugs": {
-    "url": "https://github.com/pavel-voronin/codex-web-local/issues"
+    "url": "https://github.com/Leibnizhu/codex-web-local/issues"
   },
   "keywords": [
     "codex",

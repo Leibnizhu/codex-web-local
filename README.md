@@ -82,7 +82,7 @@ kill <PID>
 
 ## Contributing
 
-Issues and pull requests are welcome! If you have ideas, suggestions, or found a bug, please open an issue on the [GitHub repository](https://github.com/pavel-voronin/codex-web-local/issues).
+Issues and pull requests are welcome! If you have ideas, suggestions, or found a bug, please open an issue on the [GitHub repository](https://github.com/Leibnizhu/codex-web-local/issues).
 
 ## License
 
