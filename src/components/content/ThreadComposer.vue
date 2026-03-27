@@ -37,6 +37,33 @@
           @update:model-value="onReasoningEffortSelect"
         />
 
+        <div class="thread-composer-mode-toggle" :class="{ 'is-disabled': disabled || !activeThreadId }">
+          <div 
+            class="thread-composer-mode-knob" 
+            :class="`is-${selectedChatMode}`"
+          ></div>
+          <button 
+            type="button" 
+            class="thread-composer-mode-btn" 
+            :class="{ 'is-active': selectedChatMode === 'plan' }"
+            @click="onChatModeSelect('plan')"
+            :title="tUi(normalizedLanguage, 'composer.modePlan')"
+          >
+            <IconTablerBulb class="thread-composer-mode-icon" />
+            <span class="thread-composer-mode-text">{{ tUi(normalizedLanguage, 'composer.modePlan') }}</span>
+          </button>
+          <button 
+            type="button" 
+            class="thread-composer-mode-btn" 
+            :class="{ 'is-active': selectedChatMode === 'act' }"
+            @click="onChatModeSelect('act')"
+            :title="tUi(normalizedLanguage, 'composer.modeAct')"
+          >
+            <IconTablerTerminal2 class="thread-composer-mode-icon" />
+            <span class="thread-composer-mode-text">{{ tUi(normalizedLanguage, 'composer.modeAct') }}</span>
+          </button>
+        </div>
+
         <div v-if="activeThreadId" class="thread-composer-status-group">
           <span
             v-if="branchLabel"
@@ -60,10 +87,17 @@
             </span>
             <div class="thread-composer-status-popover" role="status" aria-live="polite">
               <div class="thread-composer-popover-header">
-                <span class="thread-composer-popover-header-left">
+                <div class="thread-composer-popover-header-left">
+                  <span
+                    v-if="rateLimitUsage?.planType"
+                    class="thread-composer-popover-plan-badge"
+                    :data-plan="rateLimitUsage?.planType"
+                  >
+                    {{ rateLimitUsage?.planType.toUpperCase() }}
+                  </span>
                   <span class="thread-composer-popover-gauge-icon" aria-hidden="true" />
                   <span class="thread-composer-popover-title">{{ tUi(normalizedLanguage, 'composer.quotaRemainingTitle') }}</span>
-                </span>
+                </div>
               </div>
               <p v-if="quotaWindowRows.length === 0" class="thread-composer-popover-line">{{ tUi(normalizedLanguage, 'composer.quotaDataUnavailable') }}</p>
               <div
@@ -133,7 +167,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, type Component } from 'vue'
-import type { ReasoningEffort, UiRateLimitUsage, UiThreadContextUsage } from '../../types/codex'
+import type { ChatMode, ReasoningEffort, UiRateLimitUsage, UiThreadContextUsage } from '../../types/codex'
 import { tUi, type UiLanguage } from '../../i18n/uiText'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBrain from '../icons/IconTablerBrain.vue'
@@ -141,6 +175,8 @@ import IconTablerChevronDown from '../icons/IconTablerChevronDown.vue'
 import IconBranchPretty from '../icons/IconBranchPretty.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import IconTablerSettings from '../icons/IconTablerSettings.vue'
+import IconTablerBulb from '../icons/IconTablerBulb.vue'
+import IconTablerTerminal2 from '../icons/IconTablerTerminal2.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 
 const props = defineProps<{
@@ -148,6 +184,7 @@ const props = defineProps<{
   models: string[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
+  selectedChatMode: ChatMode
   threadBranch?: string
   contextUsage?: UiThreadContextUsage | null
   rateLimitUsage?: UiRateLimitUsage | null
@@ -164,6 +201,7 @@ const emit = defineEmits<{
   'compact-context': []
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
+  'update:selected-chat-mode': [mode: ChatMode]
 }>()
 
 const draft = ref('')
@@ -215,16 +253,55 @@ const branchLabel = computed(() => {
   return `${tUi(normalizedLanguage.value, 'composer.branch')} ${branch}`
 })
 const branchName = computed(() => props.threadBranch?.trim() ?? '')
+function formatCompactWindowDuration(minutes: number | null): string {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
+    return ''
+  }
+  const rounded = Math.round(minutes)
+  if (rounded % 10080 === 0) {
+    return `${rounded / 10080}w`
+  }
+  if (rounded % 1440 === 0) {
+    return `${rounded / 1440}d`
+  }
+  if (rounded % 60 === 0) {
+    return `${rounded / 60}h`
+  }
+  return `${rounded}m`
+}
 const rateLimitLabel = computed(() => {
   const usage = props.rateLimitUsage
   if (!usage) return ''
+
+  const windows = usage.windows ?? []
+  if (windows.length > 0) {
+    const minWindow = windows.reduce((lowest, current) => {
+      const currentRemaining = 100 - current.usedPercent
+      const lowestRemaining = 100 - lowest.usedPercent
+      return currentRemaining < lowestRemaining ? current : lowest
+    })
+    const remaining = Math.max(0, Math.round(100 - minWindow.usedPercent))
+    const window = formatCompactWindowDuration(minWindow.windowDurationMins)
+    if (window) {
+      return tUi(normalizedLanguage.value, 'composer.quotaRemainingWindow', { percent: remaining, window })
+    }
+    return tUi(normalizedLanguage.value, 'composer.quotaRemaining', { percent: remaining })
+  }
+
   const remaining = Math.max(0, Math.round(usage.remainingPercent))
   return tUi(normalizedLanguage.value, 'composer.quotaRemaining', { percent: remaining })
 })
 const quotaLevel = computed<'normal' | 'warn' | 'danger'>(() => {
   const usage = props.rateLimitUsage
   if (!usage) return 'normal'
-  const remaining = Math.max(0, usage.remainingPercent)
+  
+  let minRemaining = usage.remainingPercent
+  if (usage.windows && usage.windows.length > 0) {
+    const windowMin = Math.min(...usage.windows.map(w => 100 - w.usedPercent))
+    minRemaining = Math.min(minRemaining, windowMin)
+  }
+  
+  const remaining = Math.max(0, minRemaining)
   if (remaining < 5) return 'danger'
   if (remaining < 20) return 'warn'
   return 'normal'
@@ -392,7 +469,13 @@ function onModelSelect(value: string): void {
 }
 
 function onReasoningEffortSelect(value: string): void {
-  emit('update:selected-reasoning-effort', value as ReasoningEffort)
+  const effort = reasoningOptions.value.find((option) => option.value === value)?.value ?? ''
+  emit('update:selected-reasoning-effort', effort)
+}
+
+function onChatModeSelect(mode: ChatMode): void {
+  if (props.disabled || !props.activeThreadId) return
+  emit('update:selected-chat-mode', mode)
 }
 
 watch(
@@ -432,6 +515,49 @@ watch(
 
 .thread-composer-control {
   @apply shrink-0;
+}
+
+.thread-composer-mode-toggle {
+  @apply relative flex items-center p-0.5 bg-zinc-100 rounded-md shrink-0 border border-zinc-200/50;
+  height: 28px;
+  min-width: 100px;
+}
+
+.thread-composer-mode-toggle.is-disabled {
+  @apply opacity-50 pointer-events-none;
+}
+
+.thread-composer-mode-knob {
+  @apply absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] bg-white rounded shadow-sm border border-zinc-200/30 transition-all duration-300 ease-out z-0;
+}
+
+.thread-composer-mode-knob.is-plan {
+  left: 2px;
+}
+
+.thread-composer-mode-knob.is-act {
+  left: calc(50% + 0px);
+  @apply bg-blue-50/80 border-blue-200/50 shadow-blue-900/5;
+}
+
+.thread-composer-mode-btn {
+  @apply relative z-10 flex-1 flex items-center justify-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-zinc-500 transition-all duration-200;
+}
+
+.thread-composer-mode-btn.is-active {
+  @apply text-zinc-800;
+}
+
+.thread-composer-mode-knob.is-act ~ .thread-composer-mode-btn.is-active {
+  @apply text-blue-700;
+}
+
+.thread-composer-mode-icon {
+  @apply w-3.5 h-3.5;
+}
+
+.thread-composer-mode-text {
+  @apply whitespace-nowrap;
 }
 
 .thread-composer-control :deep(.composer-dropdown-trigger) {
@@ -536,7 +662,33 @@ watch(
 }
 
 .thread-composer-popover-header-left {
-  @apply flex items-center gap-1.5;
+  @apply flex items-center flex-wrap gap-2;
+}
+
+.thread-composer-popover-plan-badge {
+  @apply inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider text-white shadow-sm transition-all;
+  background: linear-gradient(135deg, #18181b 0%, #3f3f46 100%);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+}
+
+.thread-composer-popover-plan-badge[data-plan='plus'],
+.thread-composer-popover-plan-badge[data-plan='pro'] {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+}
+
+.thread-composer-popover-plan-badge[data-plan='team'],
+.thread-composer-popover-plan-badge[data-plan='business'],
+.thread-composer-popover-plan-badge[data-plan='enterprise'] {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+}
+
+.thread-composer-popover-plan-badge[data-plan='go'] {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.thread-composer-popover-plan-badge[data-plan='free'] {
+  background: linear-gradient(135deg, #71717a 0%, #52525b 100%);
 }
 
 .thread-composer-popover-gauge-icon {

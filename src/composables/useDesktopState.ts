@@ -10,6 +10,7 @@ import {
   interruptThreadTurn,
   replyToServerRequest,
   getThreadGroups,
+  renameThread,
   resumeThread,
   startThread,
   subscribeCodexNotifications,
@@ -21,6 +22,7 @@ import type {
   UiRateLimitUsage,
   UiThreadContextUsage,
   ReasoningEffort,
+  ChatMode,
   ThreadScrollState,
   UiLiveOverlay,
   UiMessage,
@@ -296,6 +298,7 @@ function normalizeRateLimitUsage(value: unknown): UiRateLimitUsage | null {
     resetsAt,
     windows,
     aiCredits,
+    planType: typeof row.planType === 'string' ? row.planType : null,
   }
 }
 
@@ -739,6 +742,7 @@ export function useDesktopState() {
   const availableModelIds = ref<string[]>([])
   const selectedModelId = ref('')
   const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
+  const selectedChatMode = ref<ChatMode>('act')
   const readStateByThreadId = ref<Record<string, string>>(loadReadStateMap())
   const scrollStateByThreadId = ref<Record<string, ThreadScrollState>>(loadThreadScrollStateMap())
   const projectOrder = ref<string[]>(loadProjectOrder())
@@ -1004,6 +1008,10 @@ export function useDesktopState() {
       return
     }
     selectedReasoningEffort.value = effort
+  }
+  
+  function setSelectedChatMode(mode: ChatMode): void {
+    selectedChatMode.value = mode
   }
 
   function buildPendingTurnDetails(): string[] {
@@ -1366,6 +1374,14 @@ export function useDesktopState() {
     if (!threadId) return
     if (!(threadId in liveReasoningTextByThreadId.value)) return
     liveReasoningTextByThreadId.value = omitKey(liveReasoningTextByThreadId.value, threadId)
+  }
+
+  function clearLiveOverlayStateForThread(threadId: string): void {
+    if (!threadId) return
+    setTurnActivityForThread(threadId, null)
+    clearLiveReasoningForThread(threadId)
+    setTurnErrorForThread(threadId, null)
+    setLiveAgentMessagesForThread(threadId, [])
   }
 
   function asRecord(value: unknown): Record<string, unknown> | null {
@@ -2108,7 +2124,7 @@ export function useDesktopState() {
         }
       }
 
-      const { messages: nextMessages, fileChanges, inProgress } = await getThreadConversationData(threadId, {
+      const { messages: nextMessages, fileChanges, inProgress, activeTurnId } = await getThreadConversationData(threadId, {
         signal: options.signal,
       })
       const previousPersisted = persistedMessagesByThreadId.value[threadId] ?? []
@@ -2127,6 +2143,17 @@ export function useDesktopState() {
       const nextLiveAgent = removeRedundantLiveAgentMessages(previousLiveAgent, nextMessages)
       setLiveAgentMessagesForThread(threadId, nextLiveAgent)
       setThreadInProgress(threadId, inProgress)
+      if (inProgress && activeTurnId) {
+        activeTurnIdByThreadId.value = {
+          ...activeTurnIdByThreadId.value,
+          [threadId]: activeTurnId,
+        }
+      } else {
+        if (activeTurnIdByThreadId.value[threadId]) {
+          activeTurnIdByThreadId.value = omitKey(activeTurnIdByThreadId.value, threadId)
+        }
+        clearLiveOverlayStateForThread(threadId)
+      }
 
       loadedMessagesByThreadId.value = {
         ...loadedMessagesByThreadId.value,
@@ -2308,6 +2335,7 @@ export function useDesktopState() {
         nextText,
         modelId || undefined,
         reasoningEffort || undefined,
+        selectedChatMode.value,
       )
 
       resumedThreadById.value = {
@@ -2373,6 +2401,27 @@ export function useDesktopState() {
       if (compactingContextByThreadId.value[threadId]) {
         compactingContextByThreadId.value = omitKey(compactingContextByThreadId.value, threadId)
       }
+    }
+  }
+
+  async function renameThreadById(threadId: string, title: string): Promise<void> {
+    const normalizedThreadId = threadId.trim()
+    const normalizedTitle = title.trim()
+    if (!normalizedThreadId || !normalizedTitle) return
+
+    try {
+      await renameThread(normalizedThreadId, normalizedTitle)
+      
+      // Optimistic update
+      sourceGroups.value = sourceGroups.value.map(group => ({
+        ...group,
+        threads: group.threads.map(thread => 
+          thread.id === normalizedThreadId ? { ...thread, title: normalizedTitle } : thread
+        )
+      }))
+      applyThreadFlags()
+    } catch (unknownError) {
+      error.value = unknownError instanceof Error ? unknownError.message : 'Failed to rename thread'
     }
   }
 
@@ -2641,6 +2690,7 @@ export function useDesktopState() {
     availableModelIds,
     selectedModelId,
     selectedReasoningEffort,
+    selectedChatMode,
     messages,
     isLoadingThreads,
     isLoadingMessages,
@@ -2653,12 +2703,14 @@ export function useDesktopState() {
     selectThread,
     setThreadScrollState,
     archiveThreadById,
+    renameThreadById,
     sendMessageToSelectedThread,
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
     compactSelectedThreadContext,
     setSelectedModelId,
     setSelectedReasoningEffort,
+    setSelectedChatMode,
     respondToPendingServerRequest,
     renameProject,
     removeProject,

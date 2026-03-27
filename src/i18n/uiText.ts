@@ -100,6 +100,10 @@ const UI_TEXT = {
     zh: ({ percent }) => `${String(percent)}% 额度`,
     en: ({ percent }) => `${String(percent)}% quota`,
   },
+  'composer.quotaRemainingWindow': {
+    zh: ({ percent, window }) => `${String(percent)}% ${String(window)}额度`,
+    en: ({ percent, window }) => `${String(percent)}% ${String(window)} quota`,
+  },
   'composer.quotaUsageTitle': {
     zh: '额度剩余：',
     en: 'Quota remaining:',
@@ -159,6 +163,14 @@ const UI_TEXT = {
   'composer.aiCreditsAvailable': {
     zh: 'AI Credits：可用',
     en: 'AI Credits: Available',
+  },
+  'composer.modePlan': {
+    zh: '规划',
+    en: 'Plan',
+  },
+  'composer.modeAct': {
+    zh: '执行',
+    en: 'Act',
   },
   'composer.aiCreditsDepleted': {
     zh: 'AI Credits：已用尽',
@@ -305,8 +317,8 @@ const UI_TEXT = {
     en: 'Loading threads...',
   },
   'sidebarTree.editName': {
-    zh: '编辑名称',
-    en: 'Edit name',
+    zh: '重命名',
+    en: 'Rename',
   },
   'sidebarTree.remove': {
     zh: '移除',
@@ -315,6 +327,10 @@ const UI_TEXT = {
   'sidebarTree.projectName': {
     zh: '项目名称',
     en: 'Project name',
+  },
+  'sidebarTree.threadName': {
+    zh: '会话名称',
+    en: 'Thread name',
   },
   'sidebarTree.noThreads': {
     zh: '暂无会话',

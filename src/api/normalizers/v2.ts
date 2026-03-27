@@ -205,6 +205,16 @@ export function normalizeThreadInProgressV2(payload: ThreadReadResponse): boolea
   return latestTurn.status === 'inProgress'
 }
 
+export function normalizeActiveTurnIdV2(payload: ThreadReadResponse): string {
+  const turns = Array.isArray(payload.thread.turns) ? payload.thread.turns : []
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]
+    if (!turn || typeof turn.id !== 'string' || typeof turn.status !== 'string') continue
+    if (turn.status === 'inProgress') return turn.id
+  }
+  return ''
+}
+
 function countDiffLineStats(diff: string): { additions: number; deletions: number } {
   let additions = 0
   let deletions = 0

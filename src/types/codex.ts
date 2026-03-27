@@ -3,6 +3,7 @@ export type RpcEnvelope<T> = {
 }
 
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ChatMode = 'plan' | 'act'
 
 export type RpcMethodCatalog = {
   data: string[]
@@ -93,6 +94,7 @@ export type UiRateLimitUsage = {
     unlimited: boolean
     balance: string | null
   } | null
+  planType: string | null
 }
 
 export type UiMessage = {

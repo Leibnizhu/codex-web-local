@@ -53,7 +53,7 @@
           :search-query="sidebarSearchQuery"
           :ui-language="uiLanguage"
           @select="onSelectThread"
-          @archive="onArchiveThread" @start-new-thread="onStartNewThread" @rename-project="onRenameProject"
+          @archive="onArchiveThread" @start-new-thread="onStartNewThread" @rename-thread="onRenameThread" @rename-project="onRenameProject"
           @remove-project="onRemoveProject" @reorder-project="onReorderProject" />
 
         <div v-if="!isSidebarCollapsed" class="sidebar-footer-actions">
@@ -123,15 +123,19 @@
 
               <ThreadComposer :active-thread-id="composerThreadContextId" :disabled="isSendingMessage"
                 :models="availableModelIds" :selected-model="selectedModelId"
-                :selected-reasoning-effort="selectedReasoningEffort" :is-turn-in-progress="false"
+                :selected-reasoning-effort="selectedReasoningEffort"
+                :selected-chat-mode="selectedChatMode"
+                :is-turn-in-progress="false"
                 :thread-branch="selectedThread?.branch ?? ''"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
                 :ui-language="uiLanguage"
-                :is-interrupting-turn="false" @submit="onSubmitThreadMessage"
+                :is-interrupting-turn="false"
+                @submit="onSubmitThreadMessage"
                 @update:selected-model="onSelectModel"
                 @update:selected-reasoning-effort="onSelectReasoningEffort"
+                @update:selected-chat-mode="setSelectedChatMode"
                 @compact-context="onCompactContext" />
             </div>
           </template>
@@ -264,15 +268,19 @@
               </div>
               <ThreadComposer :active-thread-id="composerThreadContextId"
                 :disabled="isSendingMessage || isLoadingMessages" :models="availableModelIds"
-                :selected-model="selectedModelId" :selected-reasoning-effort="selectedReasoningEffort"
+                :selected-model="selectedModelId"
+                :selected-reasoning-effort="selectedReasoningEffort"
+                :selected-chat-mode="selectedChatMode"
                 :thread-branch="selectedThread?.branch ?? ''"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
                 :ui-language="uiLanguage"
                 :is-turn-in-progress="isSelectedThreadInProgress" :is-interrupting-turn="isInterruptingTurn"
-                @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
+                @submit="onSubmitThreadMessage"
+                @update:selected-model="onSelectModel"
                 @update:selected-reasoning-effort="onSelectReasoningEffort"
+                @update:selected-chat-mode="setSelectedChatMode"
                 @interrupt="onInterruptTurn"
                 @compact-context="onCompactContext" />
               </div>
@@ -323,6 +331,7 @@ const {
   availableModelIds,
   selectedModelId,
   selectedReasoningEffort,
+  selectedChatMode,
   messages,
   isLoadingThreads,
   isLoadingMessages,
@@ -330,16 +339,19 @@ const {
   isInterruptingTurn,
   isAutoRefreshEnabled,
   autoRefreshSecondsLeft,
+  error,
   refreshAll,
   selectThread,
   setThreadScrollState,
   archiveThreadById,
+  renameThreadById,
   sendMessageToSelectedThread,
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
   compactSelectedThreadContext,
   setSelectedModelId,
   setSelectedReasoningEffort,
+  setSelectedChatMode,
   respondToPendingServerRequest,
   renameProject,
   removeProject,
@@ -646,6 +658,10 @@ function onStartNewThreadFromToolbar(): void {
   void router.push({ name: 'home' })
 }
 
+function onRenameThread(payload: { threadId: string; title: string }): void {
+  void renameThreadById(payload.threadId, payload.title)
+}
+
 function onRenameProject(payload: { projectName: string; displayName: string }): void {
   renameProject(payload.projectName, payload.displayName)
 }
@@ -688,6 +704,20 @@ function setSidebarCollapsed(nextValue: boolean): void {
 
 function onWindowKeyDown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return
+
+  if (event.key.toLowerCase() === 't' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault()
+    onToggleAutoRefreshTimer()
+    return
+  }
+
+  if (event.key === 'Tab' && event.shiftKey) {
+    event.preventDefault()
+    const nextMode = selectedChatMode.value === 'plan' ? 'act' : 'plan'
+    setSelectedChatMode(nextMode)
+    return
+  }
+
   if (!event.ctrlKey && !event.metaKey) return
   if (event.shiftKey || event.altKey) return
   if (event.key.toLowerCase() !== 'b') return

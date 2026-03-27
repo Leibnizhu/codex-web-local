@@ -17,12 +17,13 @@ import type {
 } from './appServerDtos'
 import { normalizeCodexApiError } from './codexErrors'
 import {
+  normalizeActiveTurnIdV2,
   normalizeLatestTurnFileChangesV2,
   normalizeThreadGroupsV2,
   normalizeThreadInProgressV2,
   normalizeThreadMessagesV2,
 } from './normalizers/v2'
-import type { UiMessage, UiProjectGroup, UiTurnFileChanges } from '../types/codex'
+import type { ChatMode, UiMessage, UiProjectGroup, UiTurnFileChanges } from '../types/codex'
 
 type CurrentModelConfig = {
   model: string
@@ -50,6 +51,7 @@ export type AccountRateLimitSnapshot = {
     unlimited: boolean
     balance: string | null
   } | null
+  planType: string | null
 }
 
 type RpcCallOptions = {
@@ -98,7 +100,7 @@ async function getThreadMessagesV2(threadId: string): Promise<UiMessage[]> {
 async function getThreadConversationDataV2(
   threadId: string,
   options: RpcCallOptions = {},
-): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null; inProgress: boolean }> {
+): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null; inProgress: boolean; activeTurnId: string }> {
   const payload = await callRpc<ThreadReadResponse>('thread/read', {
     threadId,
     includeTurns: true,
@@ -107,6 +109,7 @@ async function getThreadConversationDataV2(
     messages: normalizeThreadMessagesV2(payload),
     fileChanges: normalizeLatestTurnFileChangesV2(payload),
     inProgress: normalizeThreadInProgressV2(payload),
+    activeTurnId: normalizeActiveTurnIdV2(payload),
   }
 }
 
@@ -129,7 +132,7 @@ export async function getThreadMessages(threadId: string): Promise<UiMessage[]> 
 export async function getThreadConversationData(
   threadId: string,
   options: RpcCallOptions = {},
-): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null; inProgress: boolean }> {
+): Promise<{ messages: UiMessage[]; fileChanges: UiTurnFileChanges | null; inProgress: boolean; activeTurnId: string }> {
   try {
     return await getThreadConversationDataV2(threadId, options)
   } catch (error) {
@@ -176,6 +179,17 @@ export async function archiveThread(threadId: string): Promise<void> {
   await callRpc('thread/archive', { threadId })
 }
 
+export async function renameThread(threadId: string, title: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
+  const normalizedTitle = title.trim()
+  if (!normalizedThreadId || !normalizedTitle) return
+
+  await callRpc('thread/name/set', {
+    threadId: normalizedThreadId,
+    name: normalizedTitle,
+  })
+}
+
 function normalizeThreadIdFromPayload(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return ''
   const record = payload as Record<string, unknown>
@@ -215,6 +229,7 @@ export async function startThreadTurn(
   text: string,
   model?: string,
   effort?: ReasoningEffort,
+  mode?: ChatMode,
 ): Promise<void> {
   try {
     const params: Record<string, unknown> = {
@@ -226,6 +241,16 @@ export async function startThreadTurn(
     }
     if (typeof effort === 'string' && effort.length > 0) {
       params.effort = effort
+    }
+    if (mode === 'plan') {
+      params.sandboxPolicy = {
+        type: 'readOnly',
+        access: { type: 'fullAccess' },
+      }
+    } else {
+      params.sandboxPolicy = {
+        type: 'workspaceWrite',
+      }
     }
     await callRpc('turn/start', params)
   } catch (error) {
@@ -369,6 +394,7 @@ function toRateLimitSnapshot(payload: GetAccountRateLimitsResponse): AccountRate
     resetsAt: bestWindow.resetsAt,
     windows: extractAllWindows(bestSnapshot),
     aiCredits: readCredits(bestSnapshot),
+    planType: (bestSnapshot as Record<string, any>)?.planType || null,
   }
 }
 
