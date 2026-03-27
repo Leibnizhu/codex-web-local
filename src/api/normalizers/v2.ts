@@ -120,10 +120,19 @@ function toUiMessages(item: ThreadItem): UiMessage[] {
 }
 
 function pickThreadName(summary: Thread): string {
-  const direct = [summary.preview]
-  for (const candidate of direct) {
-    if (typeof candidate === 'string' && candidate.trim().length > 0) {
-      return candidate.trim()
+  const summaryRecord = summary as unknown as Record<string, unknown>
+  const candidates: unknown[] = [
+    summaryRecord.name,
+    summaryRecord.threadName,
+    summaryRecord.thread_name,
+    summary.preview,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue
+    const normalized = extractCodexUserRequestText(candidate).trim()
+    if (normalized.length > 0) {
+      return normalized
     }
   }
   return ''
@@ -135,11 +144,13 @@ function toThreadTitle(summary: Thread): string {
 }
 
 function toUiThread(summary: Thread): UiThread {
+  const branch = typeof summary.gitInfo?.branch === 'string' ? summary.gitInfo.branch.trim() : ''
   return {
     id: summary.id,
     title: toThreadTitle(summary),
     projectName: toProjectName(summary.cwd),
     cwd: summary.cwd,
+    branch,
     createdAtIso: toIso(summary.createdAt),
     updatedAtIso: toIso(summary.updatedAt),
     preview: summary.preview,

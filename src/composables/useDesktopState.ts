@@ -1,7 +1,9 @@
 import { computed, ref } from 'vue'
 import {
   archiveThread,
+  compactThreadContext,
   getAvailableModelIds,
+  getAccountRateLimitSnapshot,
   getCurrentModelConfig,
   getThreadConversationData,
   getPendingServerRequests,
@@ -15,6 +17,8 @@ import {
   type RpcNotification,
 } from '../api/codexGateway'
 import type {
+  UiRateLimitUsage,
+  UiThreadContextUsage,
   ReasoningEffort,
   ThreadScrollState,
   UiLiveOverlay,
@@ -37,10 +41,13 @@ const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
 const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const AUTO_REFRESH_ENABLED_STORAGE_KEY = 'codex-web-local.auto-refresh-enabled.v1'
+const CONTEXT_USAGE_STORAGE_KEY = 'codex-web-local.thread-context-usage.v2'
+const RATE_LIMIT_USAGE_STORAGE_KEY = 'codex-web-local.rate-limit-usage.v1'
 const EVENT_SYNC_DEBOUNCE_MS = 220
 const AUTO_REFRESH_INTERVAL_MS = 4000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
+const TOKEN_USAGE_DEBUG_ENABLED = true
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -190,6 +197,112 @@ function loadProjectDisplayNames(): Record<string, string> {
 function saveProjectDisplayNames(displayNames: Record<string, string>): void {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(PROJECT_DISPLAY_NAME_STORAGE_KEY, JSON.stringify(displayNames))
+}
+
+function normalizeThreadContextUsage(value: unknown): UiThreadContextUsage | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.usedTokens !== 'number' || !Number.isFinite(row.usedTokens) || row.usedTokens < 0) return null
+  if (typeof row.totalTokens !== 'number' || !Number.isFinite(row.totalTokens) || row.totalTokens <= 0) return null
+  if (typeof row.usedPercent !== 'number' || !Number.isFinite(row.usedPercent)) return null
+  if (typeof row.remainingPercent !== 'number' || !Number.isFinite(row.remainingPercent)) return null
+  return {
+    usedTokens: row.usedTokens,
+    totalTokens: row.totalTokens,
+    usedPercent: clamp(row.usedPercent, 0, 100),
+    remainingPercent: clamp(row.remainingPercent, 0, 100),
+  }
+}
+
+function loadThreadContextUsageMap(): Record<string, UiThreadContextUsage> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(CONTEXT_USAGE_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const normalizedMap: Record<string, UiThreadContextUsage> = {}
+    for (const [threadId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!threadId) continue
+      const normalized = normalizeThreadContextUsage(value)
+      if (normalized) normalizedMap[threadId] = normalized
+    }
+    return normalizedMap
+  } catch {
+    return {}
+  }
+}
+
+function saveThreadContextUsageMap(state: Record<string, UiThreadContextUsage>): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(CONTEXT_USAGE_STORAGE_KEY, JSON.stringify(state))
+}
+
+function normalizeRateLimitUsage(value: unknown): UiRateLimitUsage | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.usedPercent !== 'number' || !Number.isFinite(row.usedPercent)) return null
+  if (typeof row.remainingPercent !== 'number' || !Number.isFinite(row.remainingPercent)) return null
+  const windowDurationMins = typeof row.windowDurationMins === 'number' && Number.isFinite(row.windowDurationMins)
+    ? row.windowDurationMins
+    : null
+  const resetsAt = typeof row.resetsAt === 'number' && Number.isFinite(row.resetsAt) ? row.resetsAt : null
+  const rawWindows = Array.isArray(row.windows) ? row.windows : []
+  const windows = rawWindows
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+      const windowRow = item as Record<string, unknown>
+      if (typeof windowRow.usedPercent !== 'number' || !Number.isFinite(windowRow.usedPercent)) return null
+      return {
+        usedPercent: clamp(windowRow.usedPercent, 0, 100),
+        windowDurationMins: typeof windowRow.windowDurationMins === 'number' && Number.isFinite(windowRow.windowDurationMins)
+          ? windowRow.windowDurationMins
+          : null,
+        resetsAt: typeof windowRow.resetsAt === 'number' && Number.isFinite(windowRow.resetsAt)
+          ? windowRow.resetsAt
+          : null,
+      }
+    })
+    .filter((item): item is { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null } => item !== null)
+  const creditsRaw = row.aiCredits
+  const aiCredits = creditsRaw && typeof creditsRaw === 'object' && !Array.isArray(creditsRaw)
+    ? {
+      hasCredits: Boolean((creditsRaw as Record<string, unknown>).hasCredits),
+      unlimited: Boolean((creditsRaw as Record<string, unknown>).unlimited),
+      balance: typeof (creditsRaw as Record<string, unknown>).balance === 'string'
+        ? ((creditsRaw as Record<string, unknown>).balance as string)
+        : null,
+    }
+    : null
+  return {
+    usedPercent: clamp(row.usedPercent, 0, 100),
+    remainingPercent: clamp(row.remainingPercent, 0, 100),
+    windowDurationMins,
+    resetsAt,
+    windows,
+    aiCredits,
+  }
+}
+
+function loadRateLimitUsage(): UiRateLimitUsage | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(RATE_LIMIT_USAGE_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    return normalizeRateLimitUsage(parsed)
+  } catch {
+    return null
+  }
+}
+
+function saveRateLimitUsage(value: UiRateLimitUsage | null): void {
+  if (typeof window === 'undefined') return
+  if (!value) {
+    window.localStorage.removeItem(RATE_LIMIT_USAGE_STORAGE_KEY)
+    return
+  }
+  window.localStorage.setItem(RATE_LIMIT_USAGE_STORAGE_KEY, JSON.stringify(value))
 }
 
 function mergeProjectOrder(previousOrder: string[], incomingGroups: UiProjectGroup[]): string[] {
@@ -382,6 +495,12 @@ type TurnCompletedInfo = {
   startedAtMs?: number
 }
 
+type QueuedMessageState = {
+  id: string
+  text: string
+  queuedAtIso: string
+}
+
 const WORKED_MESSAGE_TYPE = 'worked'
 
 function parseIsoTimestamp(value: string): number | null {
@@ -468,12 +587,35 @@ function omitKey<TValue>(record: Record<string, TValue>, key: string): Record<st
   return next
 }
 
+function debugTokenUsageNotification(notification: RpcNotification): void {
+  if (!TOKEN_USAGE_DEBUG_ENABLED) return
+  if (typeof window === 'undefined') return
+  const params = notification.params
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return
+  const row = params as Record<string, unknown>
+  const hasTokenPayload =
+    row.tokenUsage !== undefined ||
+    row.token_usage !== undefined ||
+    row.info !== undefined
+  const tokenMethods = new Set(['thread/tokenUsage/updated', 'token_count', 'tokenCount'])
+  if (!hasTokenPayload && !tokenMethods.has(notification.method)) return
+  const threadId =
+    (typeof row.threadId === 'string' ? row.threadId : '') ||
+    (typeof row.thread_id === 'string' ? row.thread_id : '')
+  console.debug('[token-usage]', {
+    method: notification.method,
+    threadId,
+    params: row,
+  })
+}
+
 function areThreadFieldsEqual(first: UiThread, second: UiThread): boolean {
   return (
     first.id === second.id &&
     first.title === second.title &&
     first.projectName === second.projectName &&
     first.cwd === second.cwd &&
+    first.branch === second.branch &&
     first.createdAtIso === second.createdAtIso &&
     first.updatedAtIso === second.updatedAtIso &&
     first.preview === second.preview &&
@@ -565,6 +707,10 @@ export function useDesktopState() {
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
   const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>({})
+  const queuedMessagesByThreadId = ref<Record<string, QueuedMessageState[]>>({})
+  const contextUsageByThreadId = ref<Record<string, UiThreadContextUsage>>(loadThreadContextUsageMap())
+  const rateLimitUsage = ref<UiRateLimitUsage | null>(loadRateLimitUsage())
+  const compactingContextByThreadId = ref<Record<string, boolean>>({})
 
   const isLoadingThreads = ref(false)
   const isLoadingMessages = ref(false)
@@ -609,6 +755,22 @@ export function useDesktopState() {
     const threadId = selectedThreadId.value
     if (!threadId) return null
     return latestFileChangesByThreadId.value[threadId] ?? null
+  })
+  const selectedThreadContextUsage = computed<UiThreadContextUsage | null>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return null
+    return contextUsageByThreadId.value[threadId] ?? null
+  })
+  const selectedThreadRateLimitUsage = computed<UiRateLimitUsage | null>(() => rateLimitUsage.value)
+  const selectedQueuedMessages = computed<QueuedMessageState[]>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return []
+    return queuedMessagesByThreadId.value[threadId] ?? []
+  })
+  const isCompactingSelectedThreadContext = computed<boolean>(() => {
+    const threadId = selectedThreadId.value
+    if (!threadId) return false
+    return compactingContextByThreadId.value[threadId] === true
   })
   const selectedLiveOverlay = computed<UiLiveOverlay | null>(() => {
     const threadId = selectedThreadId.value
@@ -662,6 +824,69 @@ export function useDesktopState() {
     return []
   }
 
+  function enqueueMessageForThread(threadId: string, text: string): void {
+    if (!threadId) return
+    const normalizedText = text.trim()
+    if (!normalizedText) return
+    const current = queuedMessagesByThreadId.value[threadId] ?? []
+    const queuedMessage: QueuedMessageState = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: normalizedText,
+      queuedAtIso: new Date().toISOString(),
+    }
+    queuedMessagesByThreadId.value = {
+      ...queuedMessagesByThreadId.value,
+      [threadId]: [...current, queuedMessage],
+    }
+  }
+
+  function dequeueMessageForThread(threadId: string): QueuedMessageState | null {
+    const current = queuedMessagesByThreadId.value[threadId] ?? []
+    if (current.length === 0) return null
+    const [nextMessage, ...rest] = current
+    if (rest.length === 0) {
+      queuedMessagesByThreadId.value = omitKey(queuedMessagesByThreadId.value, threadId)
+    } else {
+      queuedMessagesByThreadId.value = {
+        ...queuedMessagesByThreadId.value,
+        [threadId]: rest,
+      }
+    }
+    return nextMessage
+  }
+
+  async function dispatchNextQueuedMessage(threadId: string): Promise<void> {
+    if (!threadId) return
+    if (isSendingMessage.value) return
+    if (inProgressById.value[threadId] === true) return
+    const nextMessage = dequeueMessageForThread(threadId)
+    if (!nextMessage) return
+
+    isSendingMessage.value = true
+    error.value = ''
+    shouldAutoScrollOnNextAgentEvent = selectedThreadId.value === threadId
+    setTurnSummaryForThread(threadId, null)
+    setTurnActivityForThread(
+      threadId,
+      { label: 'Thinking', details: buildPendingTurnDetails() },
+    )
+    setTurnErrorForThread(threadId, null)
+    setThreadInProgress(threadId, true)
+
+    try {
+      await startTurnForThread(threadId, nextMessage.text)
+    } catch (unknownError) {
+      shouldAutoScrollOnNextAgentEvent = false
+      setThreadInProgress(threadId, false)
+      setTurnActivityForThread(threadId, null)
+      const errorMessage = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
+      setTurnErrorForThread(threadId, errorMessage)
+      error.value = errorMessage
+    } finally {
+      isSendingMessage.value = false
+    }
+  }
+
   async function refreshModelPreferences(): Promise<void> {
     try {
       const [modelIds, currentConfig] = await Promise.all([
@@ -690,6 +915,15 @@ export function useDesktopState() {
       }
     } catch {
       // Keep chat UI usable even if model metadata is temporarily unavailable.
+    }
+  }
+
+  async function refreshRateLimitUsage(): Promise<void> {
+    try {
+      rateLimitUsage.value = await getAccountRateLimitSnapshot()
+      saveRateLimitUsage(rateLimitUsage.value)
+    } catch {
+      // Keep existing rate-limit snapshot on transient failures.
     }
   }
 
@@ -736,6 +970,10 @@ export function useDesktopState() {
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
     latestFileChangesByThreadId.value = pruneThreadStateMap(latestFileChangesByThreadId.value, activeThreadIds)
+    queuedMessagesByThreadId.value = pruneThreadStateMap(queuedMessagesByThreadId.value, activeThreadIds)
+    contextUsageByThreadId.value = pruneThreadStateMap(contextUsageByThreadId.value, activeThreadIds)
+    saveThreadContextUsageMap(contextUsageByThreadId.value)
+    compactingContextByThreadId.value = pruneThreadStateMap(compactingContextByThreadId.value, activeThreadIds)
     eventUnreadByThreadId.value = pruneThreadStateMap(eventUnreadByThreadId.value, activeThreadIds)
     inProgressById.value = pruneThreadStateMap(inProgressById.value, activeThreadIds)
     const nextPending: Record<string, UiServerRequest[]> = {}
@@ -997,6 +1235,70 @@ export function useDesktopState() {
     const diff = readString(params.diff)
     if (!threadId || !turnId) return null
     return { threadId, turnId, diff }
+  }
+
+  function readThreadContextUsage(notification: RpcNotification): { threadId: string; usage: UiThreadContextUsage } | null {
+    const params = asRecord(notification.params)
+    if (!params) return null
+
+    const tokenMethodCandidates = new Set([
+      'thread/tokenUsage/updated',
+      'token_count',
+      'tokenCount',
+    ])
+    const hasTokenPayloadHint =
+      params.tokenUsage !== undefined ||
+      params.token_usage !== undefined ||
+      params.info !== undefined
+    if (!tokenMethodCandidates.has(notification.method) && !hasTokenPayloadHint) {
+      return null
+    }
+
+    const threadId = readString(params.threadId) || readString(params.thread_id) || selectedThreadId.value
+    if (!threadId) return null
+
+    const tokenUsage =
+      asRecord(params.tokenUsage) ??
+      asRecord(params.token_usage) ??
+      asRecord(asRecord(params.info))
+    if (!tokenUsage) return null
+
+    const lastBreakdown =
+      asRecord(tokenUsage.last) ??
+      asRecord(tokenUsage.last_token_usage)
+    const totalBreakdown =
+      asRecord(tokenUsage.total) ??
+      asRecord(tokenUsage.total_token_usage)
+
+    const readBreakdownTokens = (breakdown: Record<string, unknown> | null): number | null => {
+      if (!breakdown) return null
+      return (
+        readNumber(breakdown.inputTokens) ??
+        readNumber(breakdown.input_tokens) ??
+        readNumber(breakdown.totalTokens) ??
+        readNumber(breakdown.total_tokens)
+      )
+    }
+
+    const usedTokens =
+      readBreakdownTokens(lastBreakdown) ??
+      readBreakdownTokens(totalBreakdown)
+    const totalTokens =
+      readNumber(tokenUsage.modelContextWindow) ??
+      readNumber(tokenUsage.model_context_window)
+    if (usedTokens === null || totalTokens === null || totalTokens <= 0) return null
+
+    const normalizedUsedTokens = Math.min(Math.max(usedTokens, 0), totalTokens)
+    const usedPercent = Math.min(Math.max((normalizedUsedTokens / totalTokens) * 100, 0), 100)
+    return {
+      threadId,
+      usage: {
+        usedTokens: normalizedUsedTokens,
+        totalTokens,
+        usedPercent,
+        remainingPercent: Math.max(0, 100 - usedPercent),
+      },
+    }
   }
 
   function normalizeServerRequest(params: unknown): UiServerRequest | null {
@@ -1334,8 +1636,30 @@ export function useDesktopState() {
   }
 
   function applyRealtimeUpdates(notification: RpcNotification): void {
+    debugTokenUsageNotification(notification)
+
     if (handleServerRequestNotification(notification)) {
       return
+    }
+
+    const threadContextUsage = readThreadContextUsage(notification)
+    if (threadContextUsage) {
+      contextUsageByThreadId.value = {
+        ...contextUsageByThreadId.value,
+        [threadContextUsage.threadId]: threadContextUsage.usage,
+      }
+      saveThreadContextUsageMap(contextUsageByThreadId.value)
+    }
+
+    if (notification.method === 'account/rateLimits/updated') {
+      void refreshRateLimitUsage()
+    }
+
+    if (notification.method === 'thread/compacted') {
+      const compactedThreadId = extractThreadIdFromNotification(notification)
+      if (compactedThreadId && compactingContextByThreadId.value[compactedThreadId]) {
+        compactingContextByThreadId.value = omitKey(compactingContextByThreadId.value, compactedThreadId)
+      }
     }
 
     const turnActivity = readTurnActivity(notification)
@@ -1411,6 +1735,7 @@ export function useDesktopState() {
       error.value = turnErrorMessage
     } else if (completedTurn) {
       setTurnErrorForThread(completedTurn.threadId, null)
+      void dispatchNextQueuedMessage(completedTurn.threadId)
     }
 
     const notificationThreadId = extractThreadIdFromNotification(notification)
@@ -1615,6 +1940,7 @@ export function useDesktopState() {
       await Promise.all([
         loadThreads(),
         refreshModelPreferences(),
+        refreshRateLimitUsage(),
       ])
       await loadMessages(selectedThreadId.value)
     } catch (unknownError) {
@@ -1655,6 +1981,10 @@ export function useDesktopState() {
     const threadId = selectedThreadId.value
     const nextText = text.trim()
     if (!threadId || !nextText) return
+    if (inProgressById.value[threadId] === true) {
+      enqueueMessageForThread(threadId, nextText)
+      return
+    }
 
     isSendingMessage.value = true
     error.value = ''
@@ -1753,6 +2083,7 @@ export function useDesktopState() {
       pendingThreadMessageRefresh.add(threadId)
       pendingThreadsRefresh = true
       await syncFromNotifications()
+      void dispatchNextQueuedMessage(threadId)
     } catch (unknownError) {
       throw unknownError
     }
@@ -1783,6 +2114,29 @@ export function useDesktopState() {
       error.value = errorMessage
     } finally {
       isInterruptingTurn.value = false
+    }
+  }
+
+  async function compactSelectedThreadContext(): Promise<void> {
+    const threadId = selectedThreadId.value
+    if (!threadId) return
+    if (compactingContextByThreadId.value[threadId] === true) return
+
+    compactingContextByThreadId.value = {
+      ...compactingContextByThreadId.value,
+      [threadId]: true,
+    }
+
+    error.value = ''
+    try {
+      await compactThreadContext(threadId)
+    } catch (unknownError) {
+      const errorMessage = unknownError instanceof Error ? unknownError.message : 'Failed to compact thread context'
+      error.value = errorMessage
+    } finally {
+      if (compactingContextByThreadId.value[threadId]) {
+        compactingContextByThreadId.value = omitKey(compactingContextByThreadId.value, threadId)
+      }
     }
   }
 
@@ -2033,6 +2387,7 @@ export function useDesktopState() {
     turnSummaryByThreadId.value = {}
     turnErrorByThreadId.value = {}
     activeTurnIdByThreadId.value = {}
+    compactingContextByThreadId.value = {}
   }
 
   return {
@@ -2042,6 +2397,10 @@ export function useDesktopState() {
     selectedThreadScrollState,
     selectedThreadServerRequests,
     selectedThreadFileChanges,
+    selectedQueuedMessages,
+    selectedThreadContextUsage,
+    selectedThreadRateLimitUsage,
+    isCompactingSelectedThreadContext,
     selectedLiveOverlay,
     selectedThreadId,
     availableModelIds,
@@ -2062,6 +2421,7 @@ export function useDesktopState() {
     sendMessageToSelectedThread,
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
+    compactSelectedThreadContext,
     setSelectedModelId,
     setSelectedReasoningEffort,
     respondToPendingServerRequest,

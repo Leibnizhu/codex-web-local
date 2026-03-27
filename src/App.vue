@@ -124,9 +124,15 @@
               <ThreadComposer :active-thread-id="composerThreadContextId" :disabled="isSendingMessage"
                 :models="availableModelIds" :selected-model="selectedModelId"
                 :selected-reasoning-effort="selectedReasoningEffort" :is-turn-in-progress="false"
+                :thread-branch="selectedThread?.branch ?? ''"
+                :context-usage="selectedThreadContextUsage"
+                :rate-limit-usage="selectedThreadRateLimitUsage"
+                :is-compacting-context="isCompactingSelectedThreadContext"
                 :ui-language="uiLanguage"
                 :is-interrupting-turn="false" @submit="onSubmitThreadMessage"
-                @update:selected-model="onSelectModel" @update:selected-reasoning-effort="onSelectReasoningEffort" />
+                @update:selected-model="onSelectModel"
+                @update:selected-reasoning-effort="onSelectReasoningEffort"
+                @compact-context="onCompactContext" />
             </div>
           </template>
           <template v-else>
@@ -228,6 +234,19 @@
             </div>
 
             <div class="content-composer-row">
+              <section v-if="selectedQueuedMessages.length > 0" class="content-queued-messages" aria-live="polite">
+                <p class="content-queued-messages-title">{{ t('app.queuedMessagesTitle', { count: selectedQueuedMessages.length }) }}</p>
+                <ul class="content-queued-messages-list">
+                  <li
+                    v-for="queuedMessage in selectedQueuedMessages"
+                    :key="queuedMessage.id"
+                    class="content-queued-message-item"
+                  >
+                    <p class="content-queued-message-text">{{ queuedMessage.text }}</p>
+                    <p class="content-queued-message-meta">{{ t('app.queuedMessageQueuedAt', { time: formatQueuedAtTime(queuedMessage.queuedAtIso) }) }}</p>
+                  </li>
+                </ul>
+              </section>
               <div
                 v-if="isThinkingIndicatorVisible"
                 class="content-thinking-indicator"
@@ -246,10 +265,16 @@
               <ThreadComposer :active-thread-id="composerThreadContextId"
                 :disabled="isSendingMessage || isLoadingMessages" :models="availableModelIds"
                 :selected-model="selectedModelId" :selected-reasoning-effort="selectedReasoningEffort"
+                :thread-branch="selectedThread?.branch ?? ''"
+                :context-usage="selectedThreadContextUsage"
+                :rate-limit-usage="selectedThreadRateLimitUsage"
+                :is-compacting-context="isCompactingSelectedThreadContext"
                 :ui-language="uiLanguage"
                 :is-turn-in-progress="isSelectedThreadInProgress" :is-interrupting-turn="isInterruptingTurn"
                 @submit="onSubmitThreadMessage" @update:selected-model="onSelectModel"
-                @update:selected-reasoning-effort="onSelectReasoningEffort" @interrupt="onInterruptTurn" />
+                @update:selected-reasoning-effort="onSelectReasoningEffort"
+                @interrupt="onInterruptTurn"
+                @compact-context="onCompactContext" />
               </div>
           </template>
         </section>
@@ -289,6 +314,10 @@ const {
   selectedThreadScrollState,
   selectedThreadServerRequests,
   selectedThreadFileChanges,
+  selectedQueuedMessages,
+  selectedThreadContextUsage,
+  selectedThreadRateLimitUsage,
+  isCompactingSelectedThreadContext,
   selectedLiveOverlay,
   selectedThreadId,
   availableModelIds,
@@ -308,6 +337,7 @@ const {
   sendMessageToSelectedThread,
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
+  compactSelectedThreadContext,
   setSelectedModelId,
   setSelectedReasoningEffort,
   respondToPendingServerRequest,
@@ -686,6 +716,17 @@ function onSelectReasoningEffort(effort: ReasoningEffort | ''): void {
 
 function onInterruptTurn(): void {
   void interruptSelectedThreadTurn()
+}
+
+function onCompactContext(): void {
+  void compactSelectedThreadContext()
+}
+
+function formatQueuedAtTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const locale = uiLanguage.value === 'zh' ? 'zh-CN' : 'en-US'
+  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function normalizePathSeparators(pathValue: string): string {
@@ -1398,6 +1439,30 @@ async function submitFirstMessageForNewThread(text: string): Promise<void> {
 
 .content-composer-row {
   @apply min-h-0 flex flex-col gap-2;
+}
+
+.content-queued-messages {
+  @apply w-full max-w-175 mx-auto px-6;
+}
+
+.content-queued-messages-title {
+  @apply m-0 text-[11px] leading-4 text-zinc-500;
+}
+
+.content-queued-messages-list {
+  @apply list-none m-0 mt-1.5 p-0 flex flex-col gap-1.5;
+}
+
+.content-queued-message-item {
+  @apply rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5;
+}
+
+.content-queued-message-text {
+  @apply m-0 text-xs leading-4 text-zinc-700 whitespace-pre-wrap break-words;
+}
+
+.content-queued-message-meta {
+  @apply m-0 mt-0.5 text-[10px] leading-3 text-zinc-500;
 }
 
 .content-thinking-indicator {

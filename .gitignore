@@ -3,3 +3,8 @@ dist/
 dist-cli/
 *.tsbuildinfo
 PROJECT_SPEC.md
+
+# OS / editor metadata
+.DS_Store
+.idea/
+.vscode/

@@ -63,11 +63,36 @@ export type UiThread = {
   title: string
   projectName: string
   cwd: string
+  branch: string
   createdAtIso: string
   updatedAtIso: string
   preview: string
   unread: boolean
   inProgress: boolean
+}
+
+export type UiThreadContextUsage = {
+  usedTokens: number
+  totalTokens: number
+  usedPercent: number
+  remainingPercent: number
+}
+
+export type UiRateLimitUsage = {
+  usedPercent: number
+  remainingPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+  windows: Array<{
+    usedPercent: number
+    windowDurationMins: number | null
+    resetsAt: number | null
+  }>
+  aiCredits: {
+    hasCredits: boolean
+    unlimited: boolean
+    balance: string | null
+  } | null
 }
 
 export type UiMessage = {

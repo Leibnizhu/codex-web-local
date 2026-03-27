@@ -72,6 +72,14 @@ const UI_TEXT = {
     zh: '关闭代码预览',
     en: 'Close code preview',
   },
+  'app.queuedMessagesTitle': {
+    zh: ({ count }) => `待发送 ${String(count)} 条`,
+    en: ({ count }) => `${String(count)} queued`,
+  },
+  'app.queuedMessageQueuedAt': {
+    zh: ({ time }) => `排队于 ${String(time)}`,
+    en: ({ time }) => `Queued at ${String(time)}`,
+  },
   'composer.model': {
     zh: '模型',
     en: 'Model',
@@ -83,6 +91,106 @@ const UI_TEXT = {
   'composer.reasoningEffort': {
     zh: '推理程度',
     en: 'Reasoning effort',
+  },
+  'composer.branch': {
+    zh: '分支',
+    en: 'Branch',
+  },
+  'composer.quotaRemaining': {
+    zh: ({ percent }) => `${String(percent)}% 额度`,
+    en: ({ percent }) => `${String(percent)}% quota`,
+  },
+  'composer.quotaUsageTitle': {
+    zh: '额度剩余：',
+    en: 'Quota remaining:',
+  },
+  'composer.quotaRemainingTitle': {
+    zh: '剩余额度',
+    en: 'Remaining quota',
+  },
+  'composer.quotaUsageSummary': {
+    zh: ({ used, remaining }) => `${String(used)}% 已用（剩余 ${String(remaining)}%）`,
+    en: ({ used, remaining }) => `${String(used)}% used (${String(remaining)}% left)`,
+  },
+  'composer.quotaWindowDuration': {
+    zh: ({ duration }) => `周期：${String(duration)}`,
+    en: ({ duration }) => `Window: ${String(duration)}`,
+  },
+  'composer.quotaWindowUnknown': {
+    zh: '未知周期',
+    en: 'Unknown window',
+  },
+  'composer.quotaWindowWeeks': {
+    zh: ({ weeks }) => `${String(weeks)} 周`,
+    en: ({ weeks }) => `${String(weeks)} week`,
+  },
+  'composer.quotaWindowDays': {
+    zh: ({ days }) => `${String(days)} 天`,
+    en: ({ days }) => `${String(days)} day`,
+  },
+  'composer.quotaWindowHours': {
+    zh: ({ hours }) => `${String(hours)} 小时`,
+    en: ({ hours }) => `${String(hours)} hour`,
+  },
+  'composer.quotaWindowMinutes': {
+    zh: ({ minutes }) => `${String(minutes)} 分钟`,
+    en: ({ minutes }) => `${String(minutes)} min`,
+  },
+  'composer.quotaResetAt': {
+    zh: ({ time }) => `重置时间：${String(time)}`,
+    en: ({ time }) => `Resets at: ${String(time)}`,
+  },
+  'composer.quotaDataUnavailable': {
+    zh: '等待额度数据',
+    en: 'Waiting for quota data',
+  },
+  'composer.resetSuffix': {
+    zh: '重置',
+    en: 'reset',
+  },
+  'composer.aiCreditsUnlimited': {
+    zh: 'AI Credits：无限制',
+    en: 'AI Credits: Unlimited',
+  },
+  'composer.aiCreditsBalance': {
+    zh: ({ balance }) => `AI Credits 余额：${String(balance)}`,
+    en: ({ balance }) => `AI Credits balance: ${String(balance)}`,
+  },
+  'composer.aiCreditsAvailable': {
+    zh: 'AI Credits：可用',
+    en: 'AI Credits: Available',
+  },
+  'composer.aiCreditsDepleted': {
+    zh: 'AI Credits：已用尽',
+    en: 'AI Credits: Depleted',
+  },
+  'composer.contextUsageTitle': {
+    zh: '背景信息窗口：',
+    en: 'Context window:',
+  },
+  'composer.contextUsageSummary': {
+    zh: ({ used, remaining }) => `${String(used)}% 已用（剩余 ${String(remaining)}%）`,
+    en: ({ used, remaining }) => `${String(used)}% used (${String(remaining)}% left)`,
+  },
+  'composer.contextTokensSummary': {
+    zh: ({ usedTokens, totalTokens }) => `已用 ${String(usedTokens)} 标记，共 ${String(totalTokens)}`,
+    en: ({ usedTokens, totalTokens }) => `${String(usedTokens)} used, ${String(totalTokens)} total`,
+  },
+  'composer.contextAutoCompressHint': {
+    zh: 'Codex 自动压缩其背景信息',
+    en: 'Codex auto-compresses background context',
+  },
+  'composer.contextDataUnavailable': {
+    zh: '等待上下文用量数据',
+    en: 'Waiting for context usage',
+  },
+  'composer.compactNow': {
+    zh: '立即压缩',
+    en: 'Compact now',
+  },
+  'composer.compacting': {
+    zh: '压缩中...',
+    en: 'Compacting...',
   },
   'composer.typeMessage': {
     zh: '输入消息...',
@@ -247,6 +355,18 @@ const UI_TEXT = {
   'sidebarTree.now': {
     zh: '刚刚',
     en: 'now',
+  },
+  'sidebarTree.minutesAgo': {
+    zh: ({ minutes }) => `${String(minutes)} 分钟前`,
+    en: ({ minutes }) => `${String(minutes)}m ago`,
+  },
+  'sidebarTree.hoursAgo': {
+    zh: ({ hours }) => `${String(hours)} 小时前`,
+    en: ({ hours }) => `${String(hours)}h ago`,
+  },
+  'sidebarTree.daysAgo': {
+    zh: ({ days }) => `${String(days)} 天前`,
+    en: ({ days }) => `${String(days)}d ago`,
   },
 } as const satisfies Record<string, { zh: UiTextValue; en: UiTextValue }>
 

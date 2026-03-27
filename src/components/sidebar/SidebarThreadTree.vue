@@ -17,7 +17,7 @@
                 </button>
               </span>
             </template>
-            <button class="thread-main-button" type="button" @click="onSelect(thread.id)">
+            <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
               <span class="thread-row-title">{{ thread.title }}</span>
             </button>
             <template #right>
@@ -158,7 +158,7 @@
                     </button>
                   </span>
                 </template>
-                <button class="thread-main-button" type="button" @click="onSelect(thread.id)">
+                <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
                   <span class="thread-row-title">{{ thread.title }}</span>
                 </button>
                 <template #right>
@@ -426,13 +426,13 @@ function formatRelative(value: string): string {
   if (diffMs < 60000) return t('sidebarTree.now')
 
   const minutes = Math.floor(diffMs / 60000)
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60) return t('sidebarTree.minutesAgo', { minutes })
 
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return t('sidebarTree.hoursAgo', { hours })
 
   const days = Math.floor(hours / 24)
-  return `${days}d`
+  return t('sidebarTree.daysAgo', { days })
 }
 
 function isPinned(threadId: string): boolean {
@@ -1072,7 +1072,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-row {
-  @apply hover:bg-zinc-200;
+  @apply h-8 hover:bg-zinc-200;
 }
 
 .thread-left-stack {
@@ -1084,7 +1084,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-main-button {
-  @apply min-w-0 w-full text-left rounded px-0 py-0 flex items-center min-h-5;
+  @apply min-w-0 w-full text-left rounded px-0 py-0 flex items-center h-5;
 }
 
 .thread-row-title {
@@ -1097,6 +1097,14 @@ onBeforeUnmount(() => {
 
 .thread-row-time {
   @apply block text-sm font-normal text-zinc-500;
+}
+
+.thread-hover-right-wrap {
+  @apply inline-flex items-center justify-end gap-1.5 w-34;
+}
+
+.thread-row-preview {
+  @apply min-w-0 flex-1 block text-xs leading-4 text-zinc-500 truncate whitespace-nowrap;
 }
 
 .thread-archive-button {

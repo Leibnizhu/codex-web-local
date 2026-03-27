@@ -9,6 +9,7 @@ import {
 } from './codexRpcClient'
 import type {
   ConfigReadResponse,
+  GetAccountRateLimitsResponse,
   ModelListResponse,
   ReasoningEffort,
   ThreadListResponse,
@@ -32,6 +33,23 @@ export type FilePreviewPayload = {
   path: string
   line: number | null
   content: string
+}
+
+export type AccountRateLimitSnapshot = {
+  usedPercent: number
+  remainingPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+  windows: Array<{
+    usedPercent: number
+    windowDurationMins: number | null
+    resetsAt: number | null
+  }>
+  aiCredits: {
+    hasCredits: boolean
+    unlimited: boolean
+    balance: string | null
+  } | null
 }
 
 type RpcCallOptions = {
@@ -250,6 +268,119 @@ export async function getCurrentModelConfig(): Promise<CurrentModelConfig> {
   const model = payload.config.model ?? ''
   const reasoningEffort = normalizeReasoningEffort(payload.config.model_reasoning_effort)
   return { model, reasoningEffort }
+}
+
+function normalizeUsedPercent(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.min(Math.max(value, 0), 100)
+}
+
+type RateLimitWindowInfo = {
+  usedPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+}
+
+function normalizeWindowDuration(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
+  return Math.round(value)
+}
+
+function normalizeResetAt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
+  return Math.round(value)
+}
+
+function readWindowInfo(window: unknown): RateLimitWindowInfo | null {
+  if (!window || typeof window !== 'object') return null
+  const row = window as Record<string, unknown>
+  const usedPercent = normalizeUsedPercent(row.usedPercent)
+  if (usedPercent === null) return null
+  return {
+    usedPercent,
+    windowDurationMins: normalizeWindowDuration(row.windowDurationMins),
+    resetsAt: normalizeResetAt(row.resetsAt),
+  }
+}
+
+function compareWindowDuration(first: RateLimitWindowInfo, second: RateLimitWindowInfo): number {
+  const left = first.windowDurationMins ?? -1
+  const right = second.windowDurationMins ?? -1
+  if (left !== right) return left - right
+  return first.usedPercent - second.usedPercent
+}
+
+function pickLongerWindow(snapshot: unknown): RateLimitWindowInfo | null {
+  if (!snapshot || typeof snapshot !== 'object') return null
+  const row = snapshot as Record<string, unknown>
+  const primary = readWindowInfo(row.primary)
+  const secondary = readWindowInfo(row.secondary)
+  if (!primary && !secondary) return null
+  if (!primary) return secondary
+  if (!secondary) return primary
+  return compareWindowDuration(primary, secondary) >= 0 ? primary : secondary
+}
+
+function extractAllWindows(snapshot: unknown): RateLimitWindowInfo[] {
+  if (!snapshot || typeof snapshot !== 'object') return []
+  const row = snapshot as Record<string, unknown>
+  const windows: RateLimitWindowInfo[] = []
+  const primary = readWindowInfo(row.primary)
+  const secondary = readWindowInfo(row.secondary)
+  if (primary) windows.push(primary)
+  if (secondary) windows.push(secondary)
+  windows.sort((first, second) => second.usedPercent - first.usedPercent)
+  return windows
+}
+
+function readCredits(snapshot: unknown): AccountRateLimitSnapshot['aiCredits'] {
+  if (!snapshot || typeof snapshot !== 'object') return null
+  const credits = (snapshot as Record<string, unknown>).credits
+  if (!credits || typeof credits !== 'object') return null
+  const row = credits as Record<string, unknown>
+  const hasCredits = typeof row.hasCredits === 'boolean' ? row.hasCredits : false
+  const unlimited = typeof row.unlimited === 'boolean' ? row.unlimited : false
+  const balance = typeof row.balance === 'string' ? row.balance : null
+  return { hasCredits, unlimited, balance }
+}
+
+function toRateLimitSnapshot(payload: GetAccountRateLimitsResponse): AccountRateLimitSnapshot | null {
+  const candidates: unknown[] = [payload.rateLimits]
+  if (payload.rateLimitsByLimitId && typeof payload.rateLimitsByLimitId === 'object') {
+    candidates.push(...Object.values(payload.rateLimitsByLimitId))
+  }
+
+  let bestWindow: RateLimitWindowInfo | null = null
+  let bestSnapshot: unknown = null
+  for (const candidate of candidates) {
+    const window = pickLongerWindow(candidate)
+    if (!window) continue
+    if (!bestWindow || compareWindowDuration(window, bestWindow) > 0) {
+      bestWindow = window
+      bestSnapshot = candidate
+    }
+  }
+
+  if (!bestWindow) return null
+  return {
+    usedPercent: bestWindow.usedPercent,
+    remainingPercent: Math.max(0, 100 - bestWindow.usedPercent),
+    windowDurationMins: bestWindow.windowDurationMins,
+    resetsAt: bestWindow.resetsAt,
+    windows: extractAllWindows(bestSnapshot),
+    aiCredits: readCredits(bestSnapshot),
+  }
+}
+
+export async function getAccountRateLimitSnapshot(): Promise<AccountRateLimitSnapshot | null> {
+  const payload = await callRpc<GetAccountRateLimitsResponse>('account/rateLimits/read')
+  return toRateLimitSnapshot(payload)
+}
+
+export async function compactThreadContext(threadId: string): Promise<void> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+  await callRpc('thread/compact/start', { threadId: normalizedThreadId })
 }
 
 export async function fetchFilePreview(path: string, line?: number | null): Promise<FilePreviewPayload> {

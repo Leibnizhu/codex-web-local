@@ -1128,19 +1128,19 @@ onBeforeUnmount(() => {
 }
 
 .file-change-card {
-  @apply w-full max-w-180 rounded-xl border border-zinc-300 bg-zinc-100 px-0 py-0 overflow-hidden;
+  @apply w-full max-w-180 rounded-lg border border-zinc-300 bg-zinc-100 px-0 py-0 overflow-hidden;
 }
 
 .file-change-card-header {
-  @apply px-3 py-2 border-b border-zinc-300 bg-zinc-100 flex items-center justify-between gap-3;
+  @apply px-2.5 py-1.5 border-b border-zinc-300 bg-zinc-100 flex items-center justify-between gap-2;
 }
 
 .file-change-card-title {
-  @apply m-0 text-sm leading-5 text-zinc-800;
+  @apply m-0 text-xs leading-4 text-zinc-800;
 }
 
 .file-change-header-action {
-  @apply shrink-0 text-xs leading-4 text-zinc-700 hover:text-zinc-900 underline underline-offset-2;
+  @apply shrink-0 text-[11px] leading-4 text-zinc-700 hover:text-zinc-900 underline underline-offset-2;
 }
 
 .file-change-list {
@@ -1152,15 +1152,15 @@ onBeforeUnmount(() => {
 }
 
 .file-change-button {
-  @apply w-full px-3 py-2 bg-zinc-200 text-left flex items-center justify-between gap-3 hover:bg-zinc-300 transition;
+  @apply w-full px-2.5 py-1.5 bg-zinc-200 text-left flex items-center justify-between gap-2 hover:bg-zinc-300 transition;
 }
 
 .file-change-path {
-  @apply text-sm leading-5 text-zinc-800 truncate;
+  @apply text-xs leading-4 text-zinc-800 truncate;
 }
 
 .file-change-stats {
-  @apply inline-flex items-center gap-2 shrink-0;
+  @apply inline-flex items-center gap-1.5 shrink-0 text-[11px] leading-4;
 }
 
 .file-change-stats-add {
