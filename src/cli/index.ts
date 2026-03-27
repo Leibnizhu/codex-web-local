@@ -8,13 +8,23 @@ const program = new Command()
   .name('codex-web-local')
   .description('Web interface for Codex app-server')
   .option('-p, --port <port>', 'port to listen on', '3000')
+  .option('--host <host>', 'host to bind (e.g. 127.0.0.1, 0.0.0.0, 100.x.x.x)')
   .option('-d, --daemon', 'run in background (daemon mode)')
   .option('--password <pass>', 'set a specific password')
   .option('--no-password', 'disable password protection')
   .parse()
 
-const opts = program.opts<{ port: string; daemon?: boolean; password: string | boolean }>()
+const opts = program.opts<{ port: string; host?: string; daemon?: boolean; password: string | boolean }>()
 const port = parseInt(opts.port, 10)
+const host = opts.host
+
+function formatAccessUrl(bindHost: string | undefined, bindPort: number): string {
+  if (!bindHost || bindHost === '0.0.0.0' || bindHost === '::') {
+    return `http://localhost:${String(bindPort)}`
+  }
+  const normalizedHost = bindHost.includes(':') && !bindHost.startsWith('[') ? `[${bindHost}]` : bindHost
+  return `http://${normalizedHost}:${String(bindPort)}`
+}
 
 let password: string | undefined
 if (opts.password === false) {
@@ -57,7 +67,7 @@ if (opts.daemon) {
     'Codex Web Local daemon started.',
     '',
     `  PID:      ${String(child.pid)}`,
-    `  Local:    http://localhost:${String(port)}`,
+    `  Local:    ${formatAccessUrl(host, port)}`,
   ]
   if (password) {
     lines.push(`  Password: ${password}`)
@@ -70,12 +80,12 @@ if (opts.daemon) {
 const { app, dispose } = createApp({ password })
 const server = createServer(app)
 
-server.listen(port, () => {
+server.listen(port, host, () => {
   const lines = [
     '',
     'Codex Web Local is running!',
     '',
-    `  Local:    http://localhost:${String(port)}`,
+    `  Local:    ${formatAccessUrl(host, port)}`,
   ]
 
   if (password) {

@@ -27,6 +27,7 @@ Web interface for Codex app-server
 
 Options:
   -p, --port <port>    port to listen on (default: "3000")
+  --host <host>        host to bind (e.g. 127.0.0.1 / 0.0.0.0 / 100.x.x.x)
   -d, --daemon         run in background (daemon mode)
   --password <pass>    set a specific password
   --no-password        disable password protection
@@ -34,6 +35,8 @@ Options:
 ```
 
 ## Examples
+
+### Runtime Commands (production/daily usage)
 
 ```bash
 # Start with auto-generated password on default port 3000
@@ -51,8 +54,21 @@ codex-web-local --no-password
 # Start in daemon mode (run in background)
 codex-web-local --daemon
 
-# Dev mode (Vite), expose to LAN
+# Start with an explicit bind host (listen on all interfaces)
+codex-web-local --host 0.0.0.0
+
+# Tailscale setup in daemon mode (background)
+codex-web-local --host "$(tailscale ip -4)" --port 3000 --daemon
+```
+
+### Dev Commands (Vite)
+
+```bash
+# Dev mode, expose to LAN
 npm run dev -- --host 0.0.0.0
+
+# Dev mode, bind to this machine's Tailscale IPv4
+npm run dev -- --host "$(tailscale ip -4)"
 
 # Dev mode in daemon (background)
 npm run dev -- --host 0.0.0.0 --daemon

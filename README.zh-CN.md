@@ -27,6 +27,7 @@ Web interface for Codex app-server
 
 Options:
   -p, --port <port>    监听端口（默认: "3000"）
+  --host <host>        监听地址（例如: 127.0.0.1 / 0.0.0.0 / 100.x.x.x）
   -d, --daemon         后台运行（守护进程模式）
   --password <pass>    设置固定访问密码
   --no-password        关闭密码保护
@@ -34,6 +35,8 @@ Options:
 ```
 
 ## 示例
+
+### 正式命令（生产/日常使用）
 
 ```bash
 # 默认 3000 端口启动，并自动生成访问密码
@@ -51,8 +54,21 @@ codex-web-local --no-password
 # 后台启动（守护进程模式）
 codex-web-local --daemon
 
-# 开发模式（Vite），监听局域网
+# 指定监听地址（例如监听所有网卡）
+codex-web-local --host 0.0.0.0
+
+# Tailscale 场景 + 后台运行
+codex-web-local --host "$(tailscale ip -4)" --port 3000 --daemon
+```
+
+### 开发命令（Vite）
+
+```bash
+# 开发模式，监听局域网
 npm run dev -- --host 0.0.0.0
+
+# 开发模式，绑定到当前机器的 Tailscale IPv4
+npm run dev -- --host "$(tailscale ip -4)"
 
 # 开发模式后台运行
 npm run dev -- --host 0.0.0.0 --daemon
