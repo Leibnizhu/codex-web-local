@@ -96,6 +96,12 @@ When started with password protection (default), the server prints the password 
 kill <PID>
 ```
 
+## Documentation
+
+- Docs index: [docs/README.md](./docs/README.md)
+- Contracts guide: [docs/contracts/README.md](./docs/contracts/README.md)
+- Chinese app-server doc: [docs/contracts/APP_SERVER_DOCUMENTATION.zh-CN.md](./docs/contracts/APP_SERVER_DOCUMENTATION.zh-CN.md)
+
 ## Contributing
 
 Issues and pull requests are welcome! If you have ideas, suggestions, or found a bug, please open an issue on the [GitHub repository](https://github.com/Leibnizhu/codex-web-local/issues).

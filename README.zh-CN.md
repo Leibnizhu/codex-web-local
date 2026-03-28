@@ -96,6 +96,12 @@ npm run dev -- --host 0.0.0.0 --daemon
 kill <PID>
 ```
 
+## 文档导航
+
+- 文档总入口：[docs/README.md](./docs/README.md)
+- 契约说明：[docs/contracts/README.md](./docs/contracts/README.md)
+- app-server 中文文档：[docs/contracts/APP_SERVER_DOCUMENTATION.zh-CN.md](./docs/contracts/APP_SERVER_DOCUMENTATION.zh-CN.md)
+
 ## 贡献
 
 欢迎提交 issue 和 PR。如果你有想法、建议或发现了 bug，欢迎在 [GitHub 仓库](https://github.com/Leibnizhu/codex-web-local/issues) 提交反馈。

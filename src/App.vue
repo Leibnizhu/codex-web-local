@@ -330,6 +330,18 @@ const knownThreadIdSet = computed(() => {
 })
 
 const isHomeRoute = computed(() => route.name === 'home')
+const currentProjectName = computed(() => {
+  const activeProjectName = selectedThread.value?.projectName?.trim() ?? ''
+  if (activeProjectName.length > 0) return activeProjectName
+
+  const activeCwd = (isHomeRoute.value ? newThreadCwd.value : selectedThread.value?.cwd ?? '').trim()
+  if (activeCwd.length > 0) {
+    const cwdBasename = getBasename(normalizePathSeparators(activeCwd)).trim()
+    if (cwdBasename.length > 0) return cwdBasename
+  }
+
+  return projectGroups.value[0]?.projectName?.trim() ?? ''
+})
 const contentTitle = computed(() => {
   if (isHomeRoute.value) return t('app.newThread')
   return selectedThread.value?.title ?? t('app.chooseThread')
@@ -862,6 +874,16 @@ watch(
   (language) => {
     saveUiLanguage(language)
   },
+)
+
+watch(
+  () => currentProjectName.value,
+  (projectName) => {
+    if (typeof document === 'undefined') return
+    const normalizedProjectName = projectName.trim()
+    document.title = normalizedProjectName.length > 0 ? `Codex: ${normalizedProjectName}` : 'Codex'
+  },
+  { immediate: true },
 )
 
 watch(
