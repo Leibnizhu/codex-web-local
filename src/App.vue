@@ -306,7 +306,7 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
-import type { ReasoningEffort, ThreadScrollState, UiTurnFileChanges } from './types/codex'
+import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges } from './types/codex'
 import { fetchFilePreview, fetchWorkspaceChanges, type FilePreviewPayload } from './api/codexGateway'
 import hljs from 'highlight.js/lib/common'
 
@@ -725,12 +725,12 @@ function onWindowKeyDown(event: KeyboardEvent): void {
   setSidebarCollapsed(!isSidebarCollapsed.value)
 }
 
-function onSubmitThreadMessage(text: string): void {
+function onSubmitThreadMessage(payload: ComposerSubmitPayload): void {
   if (isHomeRoute.value) {
-    void submitFirstMessageForNewThread(text)
+    void submitFirstMessageForNewThread(payload)
     return
   }
-  void sendMessageToSelectedThread(text)
+  void sendMessageToSelectedThread(payload)
 }
 
 function onSelectNewThreadFolder(cwd: string): void {
@@ -1352,10 +1352,10 @@ watch(
   { immediate: true },
 )
 
-async function submitFirstMessageForNewThread(text: string): Promise<void> {
+async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): Promise<void> {
   isCreatingThreadFromHome.value = true
   try {
-    const threadId = await sendMessageToNewThread(text, newThreadCwd.value)
+    const threadId = await sendMessageToNewThread(payload, newThreadCwd.value)
     if (!threadId) return
     await router.replace({ name: 'thread', params: { threadId } })
   } catch {

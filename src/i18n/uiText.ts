@@ -140,6 +140,22 @@ const UI_TEXT = {
     zh: ({ minutes }) => `${String(minutes)} 分钟`,
     en: ({ minutes }) => `${String(minutes)} min`,
   },
+  'composer.quotaWindowCompactWeeks': {
+    zh: ({ weeks }) => `${String(weeks)}周`,
+    en: ({ weeks }) => `${String(weeks)} week`,
+  },
+  'composer.quotaWindowCompactDays': {
+    zh: ({ days }) => `${String(days)}天`,
+    en: ({ days }) => `${String(days)} day`,
+  },
+  'composer.quotaWindowCompactHours': {
+    zh: ({ hours }) => `${String(hours)}小时`,
+    en: ({ hours }) => `${String(hours)} hr`,
+  },
+  'composer.quotaWindowCompactMinutes': {
+    zh: ({ minutes }) => `${String(minutes)}分钟`,
+    en: ({ minutes }) => `${String(minutes)} min`,
+  },
   'composer.quotaResetAt': {
     zh: ({ time }) => `重置时间：${String(time)}`,
     en: ({ time }) => `Resets at: ${String(time)}`,

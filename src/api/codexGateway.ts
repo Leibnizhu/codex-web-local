@@ -23,7 +23,7 @@ import {
   normalizeThreadInProgressV2,
   normalizeThreadMessagesV2,
 } from './normalizers/v2'
-import type { ChatMode, UiMessage, UiProjectGroup, UiTurnFileChanges } from '../types/codex'
+import type { ChatMode, UiMessage, UiProjectGroup, UiTurnFileChanges, UserInput } from '../types/codex'
 
 type CurrentModelConfig = {
   model: string
@@ -226,7 +226,7 @@ export async function startThread(cwd?: string, model?: string): Promise<string>
 
 export async function startThreadTurn(
   threadId: string,
-  text: string,
+  input: UserInput[],
   model?: string,
   effort?: ReasoningEffort,
   mode?: ChatMode,
@@ -234,7 +234,7 @@ export async function startThreadTurn(
   try {
     const params: Record<string, unknown> = {
       threadId,
-      input: [{ type: 'text', text }],
+      input,
     }
     if (typeof model === 'string' && model.length > 0) {
       params.model = model

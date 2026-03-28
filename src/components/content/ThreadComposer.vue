@@ -2,6 +2,7 @@
   <form class="thread-composer" @submit.prevent="onSubmit">
     <div class="thread-composer-shell">
       <textarea
+        ref="textareaRef"
         v-model="draft"
         class="thread-composer-input"
         :placeholder="placeholderText"
@@ -10,9 +11,102 @@
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
         @keydown.enter.exact.prevent="onEnterKeydown"
+        @paste="onPaste"
       />
 
+      <ul v-if="pastedImages.length > 0" class="thread-composer-image-list">
+        <li
+          v-for="image in pastedImages"
+          :key="image.id"
+          class="thread-composer-image-item"
+        >
+          <img
+            class="thread-composer-image-preview"
+            :src="image.url"
+            :alt="image.name"
+          />
+          <button
+            type="button"
+            class="thread-composer-image-remove"
+            :aria-label="`移除 ${image.name}`"
+            @click="removePastedImage(image.id)"
+          >
+            ×
+          </button>
+        </li>
+      </ul>
+
       <div class="thread-composer-controls">
+        <div ref="actionsMenuRef" class="thread-composer-actions">
+          <input
+            ref="fileInputRef"
+            class="thread-composer-file-input"
+            type="file"
+            accept="image/*"
+            multiple
+            @change="onFileInputChange"
+          />
+          <button
+            class="thread-composer-actions-trigger"
+            type="button"
+            :disabled="disabled || !activeThreadId"
+            :aria-expanded="isActionsMenuOpen"
+            aria-haspopup="menu"
+            title="更多操作"
+            @click="toggleActionsMenu"
+          >
+            <span class="thread-composer-actions-trigger-mark">+</span>
+          </button>
+          <div
+            v-if="isActionsMenuOpen"
+            class="thread-composer-actions-menu"
+            role="menu"
+          >
+            <button
+              class="thread-composer-actions-menu-item"
+              type="button"
+              role="menuitem"
+              @click="onSelectUploadFiles"
+            >
+              <IconTablerPaperclip class="thread-composer-actions-menu-item-icon" />
+              上传图片
+            </button>
+            <div class="thread-composer-actions-menu-divider"></div>
+            <div class="thread-composer-actions-mode-panel" role="group" aria-label="聊天模式">
+              <div class="thread-composer-actions-mode-row">
+                <component
+                  :is="IconModeToggleMenu"
+                  class="thread-composer-actions-mode-leading-icon"
+                />
+                <div class="thread-composer-mode-toggle">
+                  <div
+                    class="thread-composer-mode-knob"
+                    :class="`is-${selectedChatMode}`"
+                  ></div>
+                  <button
+                    type="button"
+                    class="thread-composer-mode-btn"
+                    :class="{ 'is-active': selectedChatMode === 'plan' }"
+                    @click="onChatModeMenuSelect('plan')"
+                  >
+                    <IconTablerBulb class="thread-composer-mode-icon" />
+                    <span>计划</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="thread-composer-mode-btn"
+                    :class="{ 'is-active': selectedChatMode === 'act' }"
+                    @click="onChatModeMenuSelect('act')"
+                  >
+                    <IconTablerTerminal2 class="thread-composer-mode-icon" />
+                    <span>执行</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <ComposerDropdown
           class="thread-composer-control"
           :model-value="selectedModel"
@@ -36,33 +130,6 @@
           :disabled="disabled || !activeThreadId || isTurnInProgress"
           @update:model-value="onReasoningEffortSelect"
         />
-
-        <div class="thread-composer-mode-toggle" :class="{ 'is-disabled': disabled || !activeThreadId }">
-          <div 
-            class="thread-composer-mode-knob" 
-            :class="`is-${selectedChatMode}`"
-          ></div>
-          <button 
-            type="button" 
-            class="thread-composer-mode-btn" 
-            :class="{ 'is-active': selectedChatMode === 'plan' }"
-            @click="onChatModeSelect('plan')"
-            :title="tUi(normalizedLanguage, 'composer.modePlan')"
-          >
-            <IconTablerBulb class="thread-composer-mode-icon" />
-            <span class="thread-composer-mode-text">{{ tUi(normalizedLanguage, 'composer.modePlan') }}</span>
-          </button>
-          <button 
-            type="button" 
-            class="thread-composer-mode-btn" 
-            :class="{ 'is-active': selectedChatMode === 'act' }"
-            @click="onChatModeSelect('act')"
-            :title="tUi(normalizedLanguage, 'composer.modeAct')"
-          >
-            <IconTablerTerminal2 class="thread-composer-mode-icon" />
-            <span class="thread-composer-mode-text">{{ tUi(normalizedLanguage, 'composer.modeAct') }}</span>
-          </button>
-        </div>
 
         <div v-if="activeThreadId" class="thread-composer-status-group">
           <span
@@ -166,8 +233,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, type Component } from 'vue'
-import type { ChatMode, ReasoningEffort, UiRateLimitUsage, UiThreadContextUsage } from '../../types/codex'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import type { ChatMode, ComposerSubmitPayload, ReasoningEffort, UiRateLimitUsage, UiThreadContextUsage } from '../../types/codex'
 import { tUi, type UiLanguage } from '../../i18n/uiText'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBrain from '../icons/IconTablerBrain.vue'
@@ -176,6 +243,8 @@ import IconBranchPretty from '../icons/IconBranchPretty.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
 import IconTablerSettings from '../icons/IconTablerSettings.vue'
 import IconTablerBulb from '../icons/IconTablerBulb.vue'
+import IconModeToggleMenu from '../icons/IconModeToggleMenu.vue'
+import IconTablerPaperclip from '../icons/IconTablerPaperclip.vue'
 import IconTablerTerminal2 from '../icons/IconTablerTerminal2.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 
@@ -195,8 +264,14 @@ const props = defineProps<{
   disabled?: boolean
 }>()
 
+type ComposerImageInput = {
+  id: string
+  name: string
+  url: string
+}
+
 const emit = defineEmits<{
-  submit: [text: string]
+  submit: [payload: ComposerSubmitPayload]
   interrupt: []
   'compact-context': []
   'update:selected-model': [modelId: string]
@@ -206,6 +281,11 @@ const emit = defineEmits<{
 
 const draft = ref('')
 const isComposing = ref(false)
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const actionsMenuRef = ref<HTMLElement | null>(null)
+const isActionsMenuOpen = ref(false)
+const pastedImages = ref<ComposerImageInput[]>([])
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
 const reasoningOptions = computed<Array<{ value: ReasoningEffort; label: string; icon?: Component; iconProps?: Record<string, unknown> }>>(() => {
   return [
@@ -259,15 +339,15 @@ function formatCompactWindowDuration(minutes: number | null): string {
   }
   const rounded = Math.round(minutes)
   if (rounded % 10080 === 0) {
-    return `${rounded / 10080}w`
+    return tUi(normalizedLanguage.value, 'composer.quotaWindowCompactWeeks', { weeks: rounded / 10080 })
   }
   if (rounded % 1440 === 0) {
-    return `${rounded / 1440}d`
+    return tUi(normalizedLanguage.value, 'composer.quotaWindowCompactDays', { days: rounded / 1440 })
   }
   if (rounded % 60 === 0) {
-    return `${rounded / 60}h`
+    return tUi(normalizedLanguage.value, 'composer.quotaWindowCompactHours', { hours: rounded / 60 })
   }
-  return `${rounded}m`
+  return tUi(normalizedLanguage.value, 'composer.quotaWindowCompactMinutes', { minutes: rounded })
 }
 const rateLimitLabel = computed(() => {
   const usage = props.rateLimitUsage
@@ -423,7 +503,7 @@ const isCompactingContext = computed(() => props.isCompactingContext === true)
 const canSubmit = computed(() => {
   if (props.disabled) return false
   if (!props.activeThreadId) return false
-  return draft.value.trim().length > 0
+  return draft.value.trim().length > 0 || pastedImages.value.length > 0
 })
 const shouldShowStopButton = computed(() =>
   props.isTurnInProgress === true && draft.value.trim().length === 0,
@@ -437,9 +517,13 @@ const placeholderText = computed(() =>
 
 function onSubmit(): void {
   const text = draft.value.trim()
-  if (!text || !canSubmit.value) return
-  emit('submit', text)
+  if (!canSubmit.value) return
+  emit('submit', {
+    text,
+    images: pastedImages.value.map((image) => ({ url: image.url })),
+  })
   draft.value = ''
+  pastedImages.value = []
 }
 
 function onCompositionStart(): void {
@@ -455,6 +539,96 @@ function onEnterKeydown(event: KeyboardEvent): void {
   if (isComposing.value || event.isComposing) return
   onSubmit()
 }
+
+async function onPaste(event: ClipboardEvent): Promise<void> {
+  const imageItems = Array.from(event.clipboardData?.items ?? []).filter((item) => item.type.startsWith('image/'))
+  if (imageItems.length === 0) return
+
+  event.preventDefault()
+  const files = imageItems
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null)
+  await appendSelectedFiles(files)
+}
+
+function removePastedImage(imageId: string): void {
+  pastedImages.value = pastedImages.value.filter((image) => image.id !== imageId)
+  textareaRef.value?.focus()
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string' && reader.result.length > 0) {
+        resolve(reader.result)
+        return
+      }
+      reject(new Error('Failed to read pasted image'))
+    }
+    reader.onerror = () => {
+      reject(reader.error ?? new Error('Failed to read pasted image'))
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function toggleActionsMenu(): void {
+  if (props.disabled || !props.activeThreadId) return
+  isActionsMenuOpen.value = !isActionsMenuOpen.value
+}
+
+function closeActionsMenu(): void {
+  isActionsMenuOpen.value = false
+}
+
+function onSelectUploadFiles(): void {
+  closeActionsMenu()
+  fileInputRef.value?.click()
+}
+
+function onChatModeMenuSelect(mode: ChatMode): void {
+  onChatModeSelect(mode)
+}
+
+async function onFileInputChange(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement | null
+  const files = Array.from(input?.files ?? []).filter((file) => file.type.startsWith('image/'))
+  if (files.length === 0) return
+  await appendSelectedFiles(files)
+  if (input) {
+    input.value = ''
+  }
+}
+
+async function appendSelectedFiles(files: File[]): Promise<void> {
+  const nextImages = await Promise.all(
+    files.map(async (file, index) => ({
+      id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+      name: file.name || `selected-image-${index + 1}.png`,
+      url: await readFileAsDataUrl(file),
+    })),
+  )
+  pastedImages.value = [...pastedImages.value, ...nextImages]
+}
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!isActionsMenuOpen.value) return
+  const root = actionsMenuRef.value
+  if (!root) return
+  const target = event.target
+  if (!(target instanceof Node)) return
+  if (root.contains(target)) return
+  closeActionsMenu()
+}
+
+onMounted(() => {
+  window.addEventListener('pointerdown', onDocumentPointerDown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', onDocumentPointerDown)
+})
 
 function onInterrupt(): void {
   emit('interrupt')
@@ -482,6 +656,8 @@ watch(
   () => props.activeThreadId,
   () => {
     draft.value = ''
+    pastedImages.value = []
+    closeActionsMenu()
   },
 )
 </script>
@@ -509,6 +685,22 @@ watch(
   @apply bg-zinc-100 text-zinc-500 cursor-not-allowed;
 }
 
+.thread-composer-image-list {
+  @apply mt-2 flex flex-wrap gap-2 list-none p-0;
+}
+
+.thread-composer-image-item {
+  @apply relative h-20 w-20 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50;
+}
+
+.thread-composer-image-preview {
+  @apply h-full w-full object-cover;
+}
+
+.thread-composer-image-remove {
+  @apply absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-xs leading-none text-zinc-700 transition hover:bg-white;
+}
+
 .thread-composer-controls {
   @apply mt-3 flex items-center gap-4;
 }
@@ -517,14 +709,58 @@ watch(
   @apply shrink-0;
 }
 
+.thread-composer-actions {
+  @apply relative shrink-0;
+}
+
+.thread-composer-file-input {
+  @apply hidden;
+}
+
+.thread-composer-actions-trigger {
+  @apply inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400;
+}
+
+.thread-composer-actions-trigger-mark {
+  @apply text-base leading-none;
+}
+
+.thread-composer-actions-menu {
+  @apply absolute bottom-[calc(100%+8px)] left-0 z-30 min-w-40 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg;
+}
+
+.thread-composer-actions-menu-item {
+  @apply flex w-full items-center gap-2 rounded-lg border-0 bg-transparent px-2 py-1.5 text-left text-[11px] text-zinc-700 transition hover:bg-zinc-100;
+}
+
+.thread-composer-actions-menu-item-icon {
+  @apply h-3.5 w-3.5 shrink-0 text-zinc-500;
+}
+
+.thread-composer-actions-menu-divider {
+  @apply my-1 h-px bg-zinc-200;
+}
+
+.thread-composer-actions-mode-panel {
+  @apply px-1 pb-1;
+}
+
+.thread-composer-actions-mode-row {
+  @apply flex items-center gap-2;
+}
+
+.thread-composer-actions-mode-leading-icon {
+  @apply h-4 w-4 shrink-0 text-zinc-500;
+}
+
+.thread-composer-actions-mode-panel .thread-composer-mode-toggle {
+  min-width: 118px;
+}
+
 .thread-composer-mode-toggle {
   @apply relative flex items-center p-0.5 bg-zinc-100 rounded-md shrink-0 border border-zinc-200/50;
   height: 28px;
   min-width: 100px;
-}
-
-.thread-composer-mode-toggle.is-disabled {
-  @apply opacity-50 pointer-events-none;
 }
 
 .thread-composer-mode-knob {

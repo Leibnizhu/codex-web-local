@@ -19,6 +19,7 @@ import {
 } from '../api/codexGateway'
 import { CodexApiError } from '../api/codexErrors'
 import type {
+  ComposerSubmitPayload,
   UiRateLimitUsage,
   UiThreadContextUsage,
   ReasoningEffort,
@@ -31,6 +32,7 @@ import type {
   UiServerRequestReply,
   UiThread,
   UiTurnFileChanges,
+  UserInput,
 } from '../types/codex'
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 
@@ -444,6 +446,39 @@ function normalizeMessageText(value: string): string {
   return value.replace(/\s+/gu, ' ').trim()
 }
 
+function normalizeComposerSubmitPayload(payload: ComposerSubmitPayload): ComposerSubmitPayload | null {
+  const text = payload.text.trim()
+  const images = payload.images
+    .map((image) => ({ url: image.url.trim() }))
+    .filter((image) => image.url.length > 0)
+  if (!text && images.length === 0) return null
+  return { text, images }
+}
+
+function buildQueuedMessagePreviewText(payload: ComposerSubmitPayload): string {
+  if (payload.text) return payload.text
+  if (payload.images.length === 1) return '[图片]'
+  return `[图片 ${payload.images.length} 张]`
+}
+
+function buildUserInputs(payload: ComposerSubmitPayload): UserInput[] {
+  const inputs: UserInput[] = []
+  if (payload.text.length > 0) {
+    inputs.push({
+      type: 'text',
+      text: payload.text,
+      text_elements: [],
+    })
+  }
+  for (const image of payload.images) {
+    inputs.push({
+      type: 'image',
+      url: image.url,
+    })
+  }
+  return inputs
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
@@ -515,6 +550,7 @@ type TurnCompletedInfo = {
 
 type QueuedMessageState = {
   id: string
+  payload: ComposerSubmitPayload
   text: string
   queuedAtIso: string
 }
@@ -1018,14 +1054,15 @@ export function useDesktopState() {
     return []
   }
 
-  function enqueueMessageForThread(threadId: string, text: string): void {
+  function enqueueMessageForThread(threadId: string, payload: ComposerSubmitPayload): void {
     if (!threadId) return
-    const normalizedText = text.trim()
-    if (!normalizedText) return
+    const normalizedPayload = normalizeComposerSubmitPayload(payload)
+    if (!normalizedPayload) return
     const current = queuedMessagesByThreadId.value[threadId] ?? []
     const queuedMessage: QueuedMessageState = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text: normalizedText,
+      payload: normalizedPayload,
+      text: buildQueuedMessagePreviewText(normalizedPayload),
       queuedAtIso: new Date().toISOString(),
     }
     queuedMessagesByThreadId.value = {
@@ -1068,7 +1105,7 @@ export function useDesktopState() {
     setThreadInProgress(threadId, true)
 
     try {
-      await startTurnForThread(threadId, nextMessage.text)
+      await startTurnForThread(threadId, nextMessage.payload)
     } catch (unknownError) {
       shouldAutoScrollOnNextAgentEvent = false
       setThreadInProgress(threadId, false)
@@ -2227,12 +2264,12 @@ export function useDesktopState() {
     }
   }
 
-  async function sendMessageToSelectedThread(text: string): Promise<void> {
+  async function sendMessageToSelectedThread(payload: ComposerSubmitPayload): Promise<void> {
     const threadId = selectedThreadId.value
-    const nextText = text.trim()
-    if (!threadId || !nextText) return
+    const normalizedPayload = normalizeComposerSubmitPayload(payload)
+    if (!threadId || !normalizedPayload) return
     if (inProgressById.value[threadId] === true) {
-      enqueueMessageForThread(threadId, nextText)
+      enqueueMessageForThread(threadId, normalizedPayload)
       return
     }
 
@@ -2253,7 +2290,7 @@ export function useDesktopState() {
     })
 
     try {
-      await startTurnForThread(threadId, nextText)
+      await startTurnForThread(threadId, normalizedPayload)
     } catch (unknownError) {
       shouldAutoScrollOnNextAgentEvent = false
       setThreadInProgress(threadId, false)
@@ -2267,11 +2304,11 @@ export function useDesktopState() {
     }
   }
 
-  async function sendMessageToNewThread(text: string, cwd: string): Promise<string> {
-    const nextText = text.trim()
+  async function sendMessageToNewThread(payload: ComposerSubmitPayload, cwd: string): Promise<string> {
+    const normalizedPayload = normalizeComposerSubmitPayload(payload)
     const targetCwd = cwd.trim()
     const selectedModel = selectedModelId.value.trim()
-    if (!nextText) return ''
+    if (!normalizedPayload) return ''
 
     isSendingMessage.value = true
     error.value = ''
@@ -2281,7 +2318,7 @@ export function useDesktopState() {
       threadId = await startThread(targetCwd || undefined, selectedModel || undefined)
       if (!threadId) return ''
 
-      addOptimisticThread(threadId, targetCwd, nextText)
+      addOptimisticThread(threadId, targetCwd, buildQueuedMessagePreviewText(normalizedPayload))
       setSelectedThreadId(threadId)
       holdNewThreadSelection(threadId)
       shouldAutoScrollOnNextAgentEvent = true
@@ -2298,7 +2335,7 @@ export function useDesktopState() {
         scrollRatio: 1,
       })
 
-      await startTurnForThread(threadId, nextText)
+      await startTurnForThread(threadId, normalizedPayload)
       pendingThreadMessageRefresh.add(threadId)
       pendingThreadsRefresh = true
       await syncFromNotifications()
@@ -2320,7 +2357,7 @@ export function useDesktopState() {
     }
   }
 
-  async function startTurnForThread(threadId: string, nextText: string): Promise<void> {
+  async function startTurnForThread(threadId: string, payload: ComposerSubmitPayload): Promise<void> {
     const modelId = selectedModelId.value.trim()
     const reasoningEffort = selectedReasoningEffort.value
 
@@ -2332,7 +2369,7 @@ export function useDesktopState() {
 
       await startThreadTurn(
         threadId,
-        nextText,
+        buildUserInputs(payload),
         modelId || undefined,
         reasoningEffort || undefined,
         selectedChatMode.value,

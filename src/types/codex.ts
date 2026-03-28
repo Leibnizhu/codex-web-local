@@ -52,11 +52,16 @@ export type ThreadItem = {
   summary?: string[]
 }
 
-export type UserInput = {
-  type: string
-  text?: string
-  path?: string
-  url?: string
+export type UserInput =
+  | { type: 'text'; text: string; text_elements: [] }
+  | { type: 'image'; url: string }
+  | { type: 'localImage'; path: string }
+  | { type: 'skill'; name: string; path: string }
+  | { type: 'mention'; name: string; path: string }
+
+export type ComposerSubmitPayload = {
+  text: string
+  images: Array<{ url: string }>
 }
 
 export type UiThread = {
