@@ -156,85 +156,14 @@
                   @open-workspace-diff="onOpenWorkspaceDiff" />
               </div>
 
-              <aside v-if="previewPanel" class="content-code-preview">
-                <header class="content-code-preview-header">
-                  <div class="content-code-preview-title-wrap">
-                    <p class="content-code-preview-title">{{ previewPanelTitle }}</p>
-                    <p v-if="previewPanelSubtitle" class="content-code-preview-subtitle">{{ previewPanelSubtitle }}</p>
-                  </div>
-                  <button
-                    class="content-code-preview-close"
-                    type="button"
-                    :aria-label="t('app.closeCodePreview')"
-                    @click="onCloseFilePreview"
-                  >
-                    <IconTablerX class="content-code-preview-close-icon" />
-                  </button>
-                </header>
-                <section v-if="previewPanel.kind === 'workspace'" class="workspace-diff-panel">
-                  <ul class="workspace-diff-list">
-                    <li v-for="change in previewPanel.changes.files" :key="`workspace:${change.path}`" class="workspace-diff-item">
-                      <button
-                        type="button"
-                        class="workspace-diff-item-button"
-                        @click="toggleWorkspaceDiffFile(change.path)"
-                      >
-                        <span class="workspace-diff-item-path">{{ formatDisplayPath(change.path, previewPanel.cwd) }}</span>
-                        <span class="workspace-diff-item-stats">
-                          <span class="file-change-stats-add">+{{ change.additions }}</span>
-                          <span class="file-change-stats-del">-{{ change.deletions }}</span>
-                        </span>
-                      </button>
-                      <pre
-                        v-if="isWorkspaceDiffFileExpanded(change.path)"
-                        class="workspace-diff-item-body"
-                      >
-                        <div class="diff-lines">
-                          <div
-                            v-for="(line, index) in buildRenderableDiffLines(change.diff)"
-                            :key="`wdiff:${change.path}:${index}`"
-                            class="diff-line"
-                            :class="`diff-line-${line.kind}`"
-                          >
-                            <span class="diff-ln-old">{{ line.oldLine ?? '' }}</span>
-                            <span class="diff-ln-new">{{ line.newLine ?? '' }}</span>
-                            <span class="diff-line-text">{{ line.text }}</span>
-                          </div>
-                        </div>
-                      </pre>
-                    </li>
-                  </ul>
-                </section>
-                <pre v-else-if="previewPanel.kind === 'diff'" class="content-code-preview-body">
-                  <div class="diff-lines">
-                    <div
-                      v-for="(line, index) in buildRenderableDiffLines(previewPanel.diff)"
-                      :key="`pdiff:${previewPanel.path}:${index}`"
-                      class="diff-line"
-                      :class="`diff-line-${line.kind}`"
-                    >
-                      <span class="diff-ln-old">{{ line.oldLine ?? '' }}</span>
-                      <span class="diff-ln-new">{{ line.newLine ?? '' }}</span>
-                      <span class="diff-line-text">{{ line.text }}</span>
-                    </div>
-                  </div>
-                </pre>
-                <pre v-else-if="previewPanel.kind === 'file'" class="content-code-preview-body">
-                  <div class="code-lines">
-                    <div
-                      v-for="(line, index) in renderableFilePreviewLines"
-                      :key="`fline:${previewPanel.payload.path}:${index}:${line.oldLine ?? 'n'}:${line.newLine ?? 'n'}`"
-                      class="diff-line"
-                      :class="[ `diff-line-${line.kind}`, filePreviewHasDiff ? '' : 'code-line-single' ]"
-                    >
-                      <span class="diff-ln-old">{{ line.oldLine ?? '' }}</span>
-                      <span v-if="filePreviewHasDiff" class="diff-ln-new">{{ line.newLine ?? '' }}</span>
-                      <span class="hljs code-line-text" v-html="line.html || '&nbsp;'"></span>
-                    </div>
-                  </div>
-                </pre>
-                <pre v-else class="content-code-preview-body"><code class="hljs content-code-preview-code" v-html="highlightedPreviewHtml"></code></pre>
-              </aside>
+              <CodePreviewPanel
+                v-if="previewPanel"
+                :panel="previewPanel"
+                :cwd="selectedThread?.cwd ?? ''"
+                :matched-file-diff="previewMatchedDiff"
+                :close-label="t('app.closeCodePreview')"
+                @close="onCloseFilePreview"
+              />
             </div>
 
             <div class="content-composer-row">
@@ -300,6 +229,8 @@ import ContentHeader from './components/content/ContentHeader.vue'
 import ThreadConversation from './components/content/ThreadConversation.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
+import CodePreviewPanel from './components/content/CodePreviewPanel.vue'
+import type { PreviewPanelState } from './components/content/CodePreviewPanel.vue'
 import SidebarThreadControls from './components/sidebar/SidebarThreadControls.vue'
 import IconTablerSearch from './components/icons/IconTablerSearch.vue'
 import IconTablerX from './components/icons/IconTablerX.vue'
@@ -307,8 +238,12 @@ import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
 import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges } from './types/codex'
-import { fetchFilePreview, fetchWorkspaceChanges, type FilePreviewPayload } from './api/codexGateway'
-import hljs from 'highlight.js/lib/common'
+import { fetchFilePreview, fetchWorkspaceChanges } from './api/codexGateway'
+import {
+  normalizePathSeparators,
+  getBasename,
+  normalizePathForMatch,
+} from './utils/pathUtils'
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'codex-web-local.sidebar-collapsed.v1'
 const UI_THEME_STORAGE_KEY = 'codex-web-local.ui-theme.v1'
@@ -375,23 +310,6 @@ function t(key: UiTextKey, params?: Record<string, number | string>): string {
 const sidebarSearchQuery = ref('')
 const isSidebarSearchVisible = ref(false)
 const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
-type PreviewPanelState =
-  | { kind: 'file'; payload: FilePreviewPayload }
-  | { kind: 'diff'; path: string; diff: string; additions: number; deletions: number }
-  | { kind: 'workspace'; cwd: string; changes: UiTurnFileChanges; expandedPaths: Record<string, boolean> }
-
-type RenderableDiffLine = {
-  kind: 'add' | 'del' | 'ctx'
-  oldLine: number | null
-  newLine: number | null
-  text: string
-}
-type RenderableCodeLine = {
-  kind: 'add' | 'del' | 'ctx'
-  oldLine: number | null
-  newLine: number | null
-  html: string
-}
 const previewPanel = ref<PreviewPanelState | null>(null)
 const workspaceDiffTotals = ref({ additions: 0, deletions: 0 })
 const isCreatingThreadFromHome = ref(false)
@@ -478,105 +396,10 @@ const canOpenWorkspaceDiff = computed(() => {
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   return cwd.length > 0
 })
-const highlightedPreviewHtml = computed(() => {
+const previewMatchedDiff = computed(() => {
   const preview = previewPanel.value
-  if (!preview) return ''
-  if (preview.kind === 'workspace' || preview.kind === 'file') return ''
-
-  const content = preview.diff
-  const language = 'diff'
-  if (language) {
-    try {
-      return hljs.highlight(content, {
-        language,
-        ignoreIllegals: true,
-      }).value
-    } catch {
-      return hljs.highlightAuto(content).value
-    }
-  }
-
-  return hljs.highlightAuto(content).value
-})
-const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
-  const preview = previewPanel.value
-  if (!preview || preview.kind !== 'file') return []
-
-  const content = preview.payload.content
-  const plainLines = content.split('\n')
-  const language = detectHighlightLanguage(preview.payload.path)
-  const highlightedLines = highlightCodeByLines(content, language)
-  const change = findTurnFileChangeByPath(preview.payload.path)
-
-  if (!change || !change.diff) {
-    return highlightedLines.map((lineHtml, index) => ({
-      kind: 'ctx',
-      oldLine: index + 1,
-      newLine: null,
-      html: lineHtml,
-    }))
-  }
-
-  const annotations = buildFileDiffAnnotations(change.diff)
-  const rendered: RenderableCodeLine[] = []
-
-  for (let i = 0; i < plainLines.length; i += 1) {
-    const lineNo = i + 1
-    const deletedBefore = annotations.deletionsByNewPos.get(lineNo) ?? []
-    for (const deleted of deletedBefore) {
-      rendered.push({
-        kind: 'del',
-        oldLine: deleted.oldLine,
-        newLine: null,
-        html: highlightSingleLine(deleted.text, language),
-      })
-    }
-
-    const isAdded = annotations.addedNewLines.has(lineNo)
-    rendered.push({
-      kind: isAdded ? 'add' : 'ctx',
-      oldLine: isAdded ? null : lineNo,
-      newLine: lineNo,
-      html: highlightedLines[i] ?? '',
-    })
-  }
-
-  const eofDeletions = annotations.deletionsByNewPos.get(plainLines.length + 1) ?? []
-  for (const deleted of eofDeletions) {
-    rendered.push({
-      kind: 'del',
-      oldLine: deleted.oldLine,
-      newLine: null,
-      html: highlightSingleLine(deleted.text, language),
-    })
-  }
-
-  return rendered
-})
-const filePreviewHasDiff = computed(() => {
-  const preview = previewPanel.value
-  if (!preview || preview.kind !== 'file') return false
-  const change = findTurnFileChangeByPath(preview.payload.path)
-  return Boolean(change && change.diff && change.diff.trim().length > 0)
-})
-const previewPanelTitle = computed(() => {
-  const preview = previewPanel.value
-  if (!preview) return ''
-  if (preview.kind === 'workspace') return '完整 Diff'
-  if (preview.kind === 'diff') return `${formatDisplayPath(preview.path, selectedThread.value?.cwd ?? '')} (diff)`
-  return formatDisplayPath(preview.payload.path, selectedThread.value?.cwd ?? '')
-})
-const previewPanelSubtitle = computed(() => {
-  const preview = previewPanel.value
-  if (!preview) return ''
-  if (preview.kind === 'workspace') {
-    return `${preview.changes.files.length} 个文件 +${preview.changes.totalAdditions} -${preview.changes.totalDeletions}`
-  }
-  if (preview.kind === 'diff') {
-    if (preview.additions === 0 && preview.deletions === 0) return ''
-    return `+${preview.additions} -${preview.deletions}`
-  }
-  return preview.payload.line ? `Line ${preview.payload.line}` : ''
+  if (!preview || preview.kind !== 'file') return null
+  return findTurnFileChangeByPath(preview.payload.path)
 })
 const newThreadFolderOptions = computed(() => {
   const options: Array<{ value: string; label: string }> = []
@@ -760,114 +583,6 @@ function formatQueuedAtTime(value: string): string {
   return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function normalizePathSeparators(pathValue: string): string {
-  return pathValue.replace(/\\/gu, '/')
-}
-
-function stripTrailingSlash(pathValue: string): string {
-  if (!pathValue) return pathValue
-  if (pathValue === '/') return pathValue
-  return pathValue.replace(/\/+$/u, '')
-}
-
-function getBasename(pathValue: string): string {
-  const normalized = normalizePathSeparators(pathValue)
-  const name = normalized.split('/').filter(Boolean).pop()
-  return name || pathValue
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/gu, '&amp;')
-    .replace(/</gu, '&lt;')
-    .replace(/>/gu, '&gt;')
-}
-
-function highlightCodeByLines(content: string, language: string | null): string[] {
-  let highlighted = ''
-  if (language) {
-    try {
-      highlighted = hljs.highlight(content, {
-        language,
-        ignoreIllegals: true,
-      }).value
-    } catch {
-      highlighted = hljs.highlightAuto(content).value
-    }
-  } else {
-    highlighted = hljs.highlightAuto(content).value
-  }
-  return highlighted.split('\n')
-}
-
-function highlightSingleLine(text: string, language: string | null): string {
-  if (!text) return ''
-  if (language) {
-    try {
-      return hljs.highlight(text, {
-        language,
-        ignoreIllegals: true,
-      }).value
-    } catch {
-      return escapeHtml(text)
-    }
-  }
-  return escapeHtml(text)
-}
-
-function collapsePathSegments(pathValue: string): string {
-  const normalized = normalizePathSeparators(pathValue.trim())
-  if (!normalized) return ''
-
-  const isWindowsAbs = /^[A-Za-z]:\//u.test(normalized)
-  const isUnixAbs = normalized.startsWith('/')
-  const hasRoot = isWindowsAbs || isUnixAbs
-
-  const rawParts = normalized.split('/')
-  const parts: string[] = []
-  for (const part of rawParts) {
-    if (!part || part === '.') continue
-    if (part === '..') {
-      if (parts.length > 0 && parts[parts.length - 1] !== '..') {
-        parts.pop()
-      } else if (!hasRoot) {
-        parts.push('..')
-      }
-      continue
-    }
-    parts.push(part)
-  }
-
-  if (isWindowsAbs) {
-    const drive = rawParts[0] ?? ''
-    const rest = parts.filter((part) => part.toLowerCase() !== drive.toLowerCase())
-    return `${drive}/${rest.join('/')}`.replace(/\/+$/u, '')
-  }
-
-  if (isUnixAbs) {
-    return `/${parts.join('/')}`.replace(/\/+$/u, '') || '/'
-  }
-
-  return parts.join('/')
-}
-
-function resolvePathWithCwd(pathValue: string, cwd: string): string {
-  const target = normalizePathSeparators(pathValue.trim())
-  if (!target) return ''
-  if (target.startsWith('/') || /^[A-Za-z]:\//u.test(target)) {
-    return collapsePathSegments(target)
-  }
-
-  const base = collapsePathSegments(cwd)
-  if (!base) return collapsePathSegments(target)
-  return collapsePathSegments(`${base}/${target}`)
-}
-
-function normalizePathForMatch(pathValue: string, cwd: string): string {
-  const resolved = resolvePathWithCwd(pathValue, cwd)
-  if (!resolved) return ''
-  return resolved.toLowerCase()
-}
 
 function findTurnFileChangeByPath(pathValue: string): UiTurnFileChanges['files'][number] | null {
   const fileChanges = selectedThreadFileChanges.value
@@ -897,109 +612,7 @@ function findTurnFileChangeByPath(pathValue: string): UiTurnFileChanges['files']
   return null
 }
 
-function buildFileDiffAnnotations(diff: string): {
-  addedNewLines: Set<number>
-  deletionsByNewPos: Map<number, Array<{ oldLine: number; text: string }>>
-} {
-  const addedNewLines = new Set<number>()
-  const deletionsByNewPos = new Map<number, Array<{ oldLine: number; text: string }>>()
-  const lines = diff.split('\n')
 
-  let oldLine = 0
-  let newLine = 0
-  let inHunk = false
-
-  for (const rawLine of lines) {
-    if (
-      rawLine.startsWith('diff --git ') ||
-      rawLine.startsWith('index ') ||
-      rawLine.startsWith('--- ') ||
-      rawLine.startsWith('+++ ')
-    ) {
-      continue
-    }
-
-    if (rawLine.startsWith('@@')) {
-      const match = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u)
-      if (match) {
-        oldLine = Number.parseInt(match[1], 10)
-        newLine = Number.parseInt(match[2], 10)
-        inHunk = true
-      }
-      continue
-    }
-
-    if (!inHunk) continue
-    if (rawLine.startsWith('\\ No newline at end of file')) continue
-
-    const marker = rawLine[0] ?? ' '
-    const content = rawLine.length > 0 ? rawLine.slice(1) : ''
-
-    if (marker === '+') {
-      addedNewLines.add(newLine)
-      newLine += 1
-      continue
-    }
-
-    if (marker === '-') {
-      const existing = deletionsByNewPos.get(newLine) ?? []
-      existing.push({ oldLine, text: content })
-      deletionsByNewPos.set(newLine, existing)
-      oldLine += 1
-      continue
-    }
-
-    oldLine += 1
-    newLine += 1
-  }
-
-  return { addedNewLines, deletionsByNewPos }
-}
-
-function formatDisplayPath(pathValue: string, cwd: string): string {
-  const target = normalizePathSeparators(pathValue.trim())
-  if (!target) return pathValue
-  if (target.startsWith('./')) return target.slice(2)
-  if (target.startsWith('../')) return target
-
-  const normalizedCwd = stripTrailingSlash(normalizePathSeparators(cwd.trim()))
-  if (normalizedCwd) {
-    const lowerTarget = target.toLowerCase()
-    const lowerCwd = normalizedCwd.toLowerCase()
-    const prefix = `${lowerCwd}/`
-    if (lowerTarget.startsWith(prefix)) {
-      return target.slice(normalizedCwd.length + 1)
-    }
-  }
-
-  const isAbsolute = target.startsWith('/') || /^[A-Za-z]:\//u.test(target)
-  return isAbsolute ? getBasename(target) : target
-}
-
-function detectHighlightLanguage(path: string): string | null {
-  const lowerPath = path.trim().toLowerCase()
-  if (!lowerPath) return null
-
-  if (lowerPath.endsWith('.ts') || lowerPath.endsWith('.tsx')) return 'typescript'
-  if (lowerPath.endsWith('.js') || lowerPath.endsWith('.jsx') || lowerPath.endsWith('.mjs') || lowerPath.endsWith('.cjs')) return 'javascript'
-  if (lowerPath.endsWith('.vue')) return 'xml'
-  if (lowerPath.endsWith('.py')) return 'python'
-  if (lowerPath.endsWith('.java')) return 'java'
-  if (lowerPath.endsWith('.scala')) return 'scala'
-  if (lowerPath.endsWith('.go')) return 'go'
-  if (lowerPath.endsWith('.rs')) return 'rust'
-  if (lowerPath.endsWith('.rb')) return 'ruby'
-  if (lowerPath.endsWith('.php')) return 'php'
-  if (lowerPath.endsWith('.json')) return 'json'
-  if (lowerPath.endsWith('.yaml') || lowerPath.endsWith('.yml')) return 'yaml'
-  if (lowerPath.endsWith('.toml')) return 'ini'
-  if (lowerPath.endsWith('.md')) return 'markdown'
-  if (lowerPath.endsWith('.sql')) return 'sql'
-  if (lowerPath.endsWith('.sh') || lowerPath.endsWith('.bash') || lowerPath.endsWith('.zsh')) return 'bash'
-  if (lowerPath.endsWith('.html') || lowerPath.endsWith('.xml')) return 'xml'
-  if (lowerPath.endsWith('.css') || lowerPath.endsWith('.scss')) return 'css'
-  return null
-}
 
 async function onOpenFileReference(payload: { path: string; line: number | null }): Promise<void> {
   const matchedDiff = findTurnFileChangeByPath(payload.path)
@@ -1066,86 +679,7 @@ async function onOpenWorkspaceDiff(): Promise<void> {
   }
 }
 
-function buildRenderableDiffLines(diff: string): RenderableDiffLine[] {
-  const lines = diff.split('\n')
-  const rendered: RenderableDiffLine[] = []
 
-  let oldLine = 0
-  let newLine = 0
-  let inHunk = false
-
-  for (const rawLine of lines) {
-    if (
-      rawLine.startsWith('diff --git ') ||
-      rawLine.startsWith('index ') ||
-      rawLine.startsWith('--- ') ||
-      rawLine.startsWith('+++ ')
-    ) {
-      continue
-    }
-
-    if (rawLine.startsWith('@@')) {
-      const match = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u)
-      if (match) {
-        oldLine = Number.parseInt(match[1], 10)
-        newLine = Number.parseInt(match[2], 10)
-        inHunk = true
-      }
-      continue
-    }
-
-    if (!inHunk) continue
-    if (rawLine.startsWith('\\ No newline at end of file')) continue
-
-    const marker = rawLine[0] ?? ' '
-    const content = rawLine.length > 0 ? rawLine.slice(1) : ''
-
-    if (marker === '+') {
-      rendered.push({
-        kind: 'add',
-        oldLine: null,
-        newLine,
-        text: content,
-      })
-      newLine += 1
-      continue
-    }
-
-    if (marker === '-') {
-      rendered.push({
-        kind: 'del',
-        oldLine,
-        newLine: null,
-        text: content,
-      })
-      oldLine += 1
-      continue
-    }
-
-    rendered.push({
-      kind: 'ctx',
-      oldLine,
-      newLine,
-      text: marker === ' ' ? content : rawLine,
-    })
-    oldLine += 1
-    newLine += 1
-  }
-
-  return rendered
-}
-
-function isWorkspaceDiffFileExpanded(path: string): boolean {
-  const panel = previewPanel.value
-  if (!panel || panel.kind !== 'workspace') return false
-  return panel.expandedPaths[path] === true
-}
-
-function toggleWorkspaceDiffFile(path: string): void {
-  const panel = previewPanel.value
-  if (!panel || panel.kind !== 'workspace') return
-  panel.expandedPaths[path] = panel.expandedPaths[path] !== true
-}
 
 async function refreshWorkspaceDiffTotals(): Promise<void> {
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
@@ -1555,122 +1089,6 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
   @apply basis-[58%];
 }
 
-.content-code-preview {
-  @apply min-h-0 min-w-0 w-[42%] rounded-xl border border-zinc-200 bg-zinc-50 flex flex-col overflow-hidden;
-}
-
-.content-code-preview-header {
-  @apply px-3 py-2 border-b border-zinc-200 bg-white flex items-start justify-between gap-2;
-}
-
-.content-code-preview-title-wrap {
-  @apply min-w-0;
-}
-
-.content-code-preview-title {
-  @apply m-0 text-xs leading-5 text-zinc-800 truncate;
-}
-
-.content-code-preview-subtitle {
-  @apply m-0 text-[11px] leading-4 text-zinc-500;
-}
-
-.content-code-preview-close {
-  @apply h-6 w-6 rounded-md border border-transparent bg-transparent text-zinc-500 flex items-center justify-center hover:border-zinc-200 hover:bg-zinc-100;
-}
-
-.content-code-preview-close-icon {
-  @apply h-4 w-4;
-}
-
-.content-code-preview-body {
-  @apply m-0 flex-1 min-h-0 overflow-auto px-2 py-1.5 text-[11px] leading-4 text-zinc-800 bg-zinc-50;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-.content-code-preview-code {
-  @apply block whitespace-pre;
-}
-
-.code-lines {
-  @apply flex flex-col min-w-full;
-}
-
-.code-line-text {
-  @apply px-2 text-xs leading-5 text-zinc-800 whitespace-pre;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-.workspace-diff-panel {
-  @apply m-0 flex-1 min-h-0 overflow-auto bg-zinc-50;
-}
-
-.workspace-diff-list {
-  @apply list-none m-0 p-0;
-}
-
-.workspace-diff-item {
-  @apply border-b border-zinc-200 last:border-b-0;
-}
-
-.workspace-diff-item-button {
-  @apply w-full px-2.5 py-1.5 text-left bg-zinc-100 hover:bg-zinc-200 transition flex items-center justify-between gap-3;
-}
-
-.workspace-diff-item-path {
-  @apply text-[11px] leading-4 text-zinc-800 truncate;
-}
-
-.workspace-diff-item-stats {
-  @apply inline-flex items-center gap-2 shrink-0;
-}
-
-.workspace-diff-item-body {
-  @apply m-0 border-t border-zinc-200 px-2 py-1.5 overflow-auto text-[11px] leading-4 bg-zinc-50;
-}
-
-.diff-lines {
-  @apply flex flex-col min-w-full;
-}
-
-.diff-line {
-  @apply grid items-start;
-  grid-template-columns: 44px 44px minmax(0, 1fr);
-}
-
-.code-line-single {
-  grid-template-columns: 44px minmax(0, 1fr);
-}
-
-.diff-line-add {
-  @apply bg-emerald-50;
-}
-
-.diff-line-del {
-  @apply bg-rose-50;
-}
-
-.diff-line-ctx {
-  @apply bg-transparent;
-}
-
-.diff-ln-old,
-.diff-ln-new {
-  @apply text-right pr-1.5 text-[10px] leading-4 text-zinc-500 select-none border-r border-zinc-200;
-}
-
-.diff-line-add .diff-ln-new {
-  @apply text-emerald-700;
-}
-
-.diff-line-del .diff-ln-old {
-  @apply text-rose-700;
-}
-
-.diff-line-text {
-  @apply px-1.5 text-[11px] leading-4 text-zinc-800 whitespace-pre;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
 
 @media (max-width: 1100px) {
   .content-grid-thread {
@@ -1679,10 +1097,6 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 
   .content-grid-thread-has-preview .content-thread {
     @apply basis-auto;
-  }
-
-  .content-code-preview {
-    @apply w-full h-64;
   }
 }
 
