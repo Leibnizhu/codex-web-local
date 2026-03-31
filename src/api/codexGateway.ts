@@ -10,8 +10,10 @@ import {
 import type {
   ConfigReadResponse,
   GetAccountRateLimitsResponse,
+  Model,
   ModelListResponse,
   ReasoningEffort,
+  ReasoningEffortOption,
   ThreadListResponse,
   ThreadReadResponse,
 } from './appServerDtos'
@@ -29,6 +31,18 @@ type CurrentModelConfig = {
   model: string
   reasoningEffort: ReasoningEffort | ''
 }
+
+export type ModelReasoningSupport = {
+  supported: ReasoningEffort[]
+  defaultEffort: ReasoningEffort | ''
+}
+
+const EMPTY_MODEL_REASONING_SUPPORT: ModelReasoningSupport = {
+  supported: [],
+  defaultEffort: '',
+}
+
+const modelReasoningSupportById = new Map<string, ModelReasoningSupport>()
 
 export type FilePreviewPayload = {
   path: string
@@ -78,6 +92,37 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''
+}
+
+function toModelReasoningSupport(model: Model): ModelReasoningSupport {
+  const supported = Array.isArray(model.supportedReasoningEfforts)
+    ? model.supportedReasoningEfforts
+      .map((option: ReasoningEffortOption) => normalizeReasoningEffort(option.reasoningEffort))
+      .filter((effort): effort is ReasoningEffort => effort.length > 0)
+    : []
+
+  return {
+    supported: Array.from(new Set(supported)),
+    defaultEffort: normalizeReasoningEffort(model.defaultReasoningEffort),
+  }
+}
+
+function cloneModelReasoningSupport(
+  support: ModelReasoningSupport,
+): ModelReasoningSupport {
+  return {
+    supported: [...support.supported],
+    defaultEffort: support.defaultEffort,
+  }
+}
+
+export function getModelReasoningSupport(modelId: string): ModelReasoningSupport {
+  const normalizedModelId = modelId.trim()
+  if (!normalizedModelId) {
+    return cloneModelReasoningSupport(EMPTY_MODEL_REASONING_SUPPORT)
+  }
+  const support = modelReasoningSupportById.get(normalizedModelId) ?? EMPTY_MODEL_REASONING_SUPPORT
+  return cloneModelReasoningSupport(support)
 }
 
 async function getThreadGroupsV2(): Promise<UiProjectGroup[]> {
@@ -240,7 +285,12 @@ export async function startThreadTurn(
       params.model = model
     }
     if (typeof effort === 'string' && effort.length > 0) {
-      params.effort = effort
+      const support = typeof model === 'string' && model.length > 0
+        ? getModelReasoningSupport(model)
+        : EMPTY_MODEL_REASONING_SUPPORT
+      if (support.supported.includes(effort)) {
+        params.effort = effort
+      }
     }
     if (mode === 'plan') {
       params.sandboxPolicy = {
@@ -280,10 +330,14 @@ export async function setDefaultModel(model: string): Promise<void> {
 export async function getAvailableModelIds(): Promise<string[]> {
   const payload = await callRpc<ModelListResponse>('model/list', {})
   const ids: string[] = []
+  modelReasoningSupportById.clear()
   for (const row of payload.data) {
     const candidate = row.id || row.model
-    if (!candidate || ids.includes(candidate)) continue
-    ids.push(candidate)
+    if (!candidate) continue
+    const normalizedCandidate = candidate.trim()
+    if (!normalizedCandidate || ids.includes(normalizedCandidate)) continue
+    ids.push(normalizedCandidate)
+    modelReasoningSupportById.set(normalizedCandidate, toModelReasoningSupport(row))
   }
   return ids
 }

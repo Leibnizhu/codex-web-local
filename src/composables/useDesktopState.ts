@@ -5,6 +5,7 @@ import {
   getAvailableModelIds,
   getAccountRateLimitSnapshot,
   getCurrentModelConfig,
+  getModelReasoningSupport,
   getThreadConversationData,
   getPendingServerRequests,
   interruptThreadTurn,
@@ -370,6 +371,7 @@ export function useDesktopState() {
 
   function setSelectedModelId(modelId: string): void {
     selectedModelId.value = modelId.trim()
+    normalizeReasoningEffortForModel(selectedModelId.value)
   }
 
   function setSelectedReasoningEffort(effort: ReasoningEffort | ''): void {
@@ -377,6 +379,25 @@ export function useDesktopState() {
       return
     }
     selectedReasoningEffort.value = effort
+  }
+
+  function normalizeReasoningEffortForModel(modelId: string): void {
+    const support = getModelReasoningSupport(modelId)
+    if (support.supported.length === 0) {
+      return
+    }
+
+    const current = selectedReasoningEffort.value
+    if (current && support.supported.includes(current)) {
+      return
+    }
+
+    if (support.defaultEffort && support.supported.includes(support.defaultEffort)) {
+      selectedReasoningEffort.value = support.defaultEffort
+      return
+    }
+
+    selectedReasoningEffort.value = support.supported[0] ?? ''
   }
   
   function setSelectedChatMode(mode: ChatMode): void {
@@ -447,6 +468,8 @@ export function useDesktopState() {
       ) {
         selectedReasoningEffort.value = currentConfig.reasoningEffort
       }
+
+      normalizeReasoningEffortForModel(selectedModelId.value)
     } catch {
       // Keep chat UI usable even if model metadata is temporarily unavailable.
     }
