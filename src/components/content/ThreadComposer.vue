@@ -120,6 +120,7 @@
         />
 
         <ComposerDropdown
+          v-if="reasoningOptions.length > 0"
           class="thread-composer-control"
           :model-value="selectedReasoningEffort"
           :options="reasoningOptions"
@@ -246,6 +247,7 @@ import IconTablerBulb from '../icons/IconTablerBulb.vue'
 import IconModeToggleMenu from '../icons/IconModeToggleMenu.vue'
 import IconTablerPaperclip from '../icons/IconTablerPaperclip.vue'
 import IconTablerTerminal2 from '../icons/IconTablerTerminal2.vue'
+import { getModelReasoningSupport } from '../../api/codexGateway'
 import ComposerDropdown from './ComposerDropdown.vue'
 
 const props = defineProps<{
@@ -287,8 +289,9 @@ const actionsMenuRef = ref<HTMLElement | null>(null)
 const isActionsMenuOpen = ref(false)
 const pastedImages = ref<ComposerImageInput[]>([])
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
+const REASONING_EFFORT_ORDER: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const reasoningOptions = computed<Array<{ value: ReasoningEffort; label: string; icon?: Component; iconProps?: Record<string, unknown> }>>(() => {
-  return [
+  const base: Array<{ value: ReasoningEffort; label: string; icon?: Component; iconProps?: Record<string, unknown> }> = [
     { value: 'none', label: tUi(normalizedLanguage.value, 'composer.reasoning.none'), icon: IconTablerBrain, iconProps: { level: 0 } },
     { value: 'minimal', label: tUi(normalizedLanguage.value, 'composer.reasoning.minimal'), icon: IconTablerBrain, iconProps: { level: 1 } },
     { value: 'low', label: tUi(normalizedLanguage.value, 'composer.reasoning.low'), icon: IconTablerBrain, iconProps: { level: 2 } },
@@ -296,6 +299,17 @@ const reasoningOptions = computed<Array<{ value: ReasoningEffort; label: string;
     { value: 'high', label: tUi(normalizedLanguage.value, 'composer.reasoning.high'), icon: IconTablerBrain, iconProps: { level: 4 } },
     { value: 'xhigh', label: tUi(normalizedLanguage.value, 'composer.reasoning.xhigh'), icon: IconTablerBrain, iconProps: { level: 5 } },
   ]
+
+  const support = getModelReasoningSupport(props.selectedModel)
+  if (support.supported.length === 0) {
+    return []
+  }
+
+  const optionByEffort = new Map(base.map((option) => [option.value, option]))
+  return REASONING_EFFORT_ORDER
+    .filter((effort) => support.supported.includes(effort))
+    .map((effort) => optionByEffort.get(effort))
+    .filter((option): option is { value: ReasoningEffort; label: string; icon?: Component; iconProps?: Record<string, unknown> } => option !== undefined)
 })
 
 function toDisplayModelName(modelId: string): string {

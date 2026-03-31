@@ -6,6 +6,8 @@ export type { ThreadItem } from '../../documentation/app-server-schemas/typescri
 export type { Turn } from '../../documentation/app-server-schemas/typescript/v2/Turn'
 export type { UserInput } from '../../documentation/app-server-schemas/typescript/v2/UserInput'
 export type { ModelListResponse } from '../../documentation/app-server-schemas/typescript/v2/ModelListResponse'
+export type { Model } from '../../documentation/app-server-schemas/typescript/v2/Model'
+export type { ReasoningEffortOption } from '../../documentation/app-server-schemas/typescript/v2/ReasoningEffortOption'
 export type { ConfigReadResponse } from '../../documentation/app-server-schemas/typescript/v2/ConfigReadResponse'
 export type { ReasoningEffort } from '../../documentation/app-server-schemas/typescript/ReasoningEffort'
 export type { GetAccountRateLimitsResponse } from '../../documentation/app-server-schemas/typescript/v2/GetAccountRateLimitsResponse'
