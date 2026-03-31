@@ -9,6 +9,7 @@ import {
   getAccountRateLimitSnapshot,
   getCurrentModelConfig,
   getModelReasoningSupport,
+  getPersistedServerRequests,
   getThreadConversationData,
   getPendingServerRequests,
   interruptThreadTurn,
@@ -30,9 +31,10 @@ import type {
   ReasoningEffort,
   ChatMode,
   ThreadScrollState,
-  UiLiveOverlay,
-  UiMessage,
-  UiProjectGroup,
+    UiLiveOverlay,
+    UiMessage,
+    UiPersistedServerRequest,
+    UiProjectGroup,
   UiServerRequest,
   UiServerRequestReply,
   UiThread,
@@ -149,6 +151,14 @@ const ARCHIVE_RETRY_BASE_DELAY_MS = 1200
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const TOKEN_USAGE_DEBUG_ENABLED = true
+const EMPTY_WORKSPACE_DIRTY_SUMMARY = {
+  trackedModified: 0,
+  staged: 0,
+  untracked: 0,
+  conflicted: 0,
+  renamed: 0,
+  deleted: 0,
+}
 const THREAD_LIST_REFRESH_METHODS = new Set([
   'thread/started',
   'thread/name/updated',
@@ -224,6 +234,7 @@ export function useDesktopState() {
   const turnErrorByThreadId = ref<Record<string, TurnErrorState>>({})
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
+  const persistedServerRequestsByThreadId = ref<Record<string, UiPersistedServerRequest[]>>({})
   const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>({})
   const queuedMessagesByThreadId = ref<Record<string, QueuedMessageState[]>>({})
   const contextUsageByThreadId = ref<Record<string, UiThreadContextUsage>>(loadThreadContextUsageMap())
@@ -269,6 +280,16 @@ export function useDesktopState() {
       selectedThreadId.value,
       GLOBAL_SERVER_REQUEST_SCOPE,
     )
+  })
+  const selectedThreadPersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
+    const rows: UiPersistedServerRequest[] = []
+    if (selectedThreadId.value && Array.isArray(persistedServerRequestsByThreadId.value[selectedThreadId.value])) {
+      rows.push(...persistedServerRequestsByThreadId.value[selectedThreadId.value])
+    }
+    if (Array.isArray(persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE])) {
+      rows.push(...persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE])
+    }
+    return rows.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   })
   const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
     const threadId = selectedThreadId.value
@@ -434,6 +455,8 @@ export function useDesktopState() {
       isDirty: false,
       currentBranch: '',
       branches: [],
+      dirtySummary: { ...EMPTY_WORKSPACE_DIRTY_SUMMARY },
+      dirtyEntries: [],
       isLoading: false,
       isSwitching: false,
       blockedReasons: [],
@@ -468,6 +491,44 @@ export function useDesktopState() {
     })
   }
 
+  function hasPendingServerRequestsInWorkspace(cwd: string): boolean {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return false
+    const globalRequests = pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+    if (globalRequests.length > 0) {
+      return true
+    }
+    return allThreads.value.some((thread) => {
+      if (thread.cwd.trim() !== normalizedCwd) return false
+      const requests = pendingServerRequestsByThreadId.value[thread.id] ?? []
+      return requests.length > 0
+    })
+  }
+
+  function getThreadCwdById(threadId: string): string {
+    if (!threadId) return ''
+    const thread = allThreads.value.find((row) => row.id === threadId)
+    return thread?.cwd?.trim() ?? ''
+  }
+
+  function hasPersistedServerRequestsInWorkspace(cwd: string): boolean {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return false
+    const globalRequests = persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+    if (globalRequests.length > 0) {
+      return true
+    }
+    return Object.entries(persistedServerRequestsByThreadId.value).some(([threadId, requests]) => {
+      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) return false
+      return requests.some((request) => {
+        const requestCwd = request.cwd.trim()
+        if (requestCwd) return requestCwd === normalizedCwd
+        const mappedCwd = getThreadCwdById(request.threadId)
+        return mappedCwd === normalizedCwd
+      })
+    })
+  }
+
   function computeWorkspaceBranchBlockedReasons(
     cwd: string,
     state: Pick<UiWorkspaceBranchState, 'isRepo' | 'isDirty'>,
@@ -477,7 +538,31 @@ export function useDesktopState() {
     if (state.isDirty) reasons.push('workspace_dirty')
     if (hasInProgressThreadsInWorkspace(cwd)) reasons.push('thread_in_progress')
     if (hasQueuedMessagesInWorkspace(cwd)) reasons.push('queued_messages')
+    if (hasPendingServerRequestsInWorkspace(cwd)) reasons.push('pending_server_requests')
+    if (hasPersistedServerRequestsInWorkspace(cwd)) reasons.push('persisted_server_requests')
     return reasons
+  }
+
+  function syncWorkspaceBranchBlockedReasons(): void {
+    const cwdSet = new Set<string>(Object.keys(workspaceBranchStateByCwd.value))
+    for (const thread of allThreads.value) {
+      const cwd = thread.cwd.trim()
+      if (cwd) cwdSet.add(cwd)
+    }
+
+    if (cwdSet.size === 0) return
+
+    const nextStateByCwd: Record<string, UiWorkspaceBranchState> = {
+      ...workspaceBranchStateByCwd.value,
+    }
+    for (const cwd of cwdSet) {
+      const current = nextStateByCwd[cwd] ?? createWorkspaceBranchState(cwd)
+      nextStateByCwd[cwd] = {
+        ...current,
+        blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, current),
+      }
+    }
+    workspaceBranchStateByCwd.value = nextStateByCwd
   }
 
   async function refreshWorkspaceBranchState(
@@ -506,6 +591,8 @@ export function useDesktopState() {
         isDirty: status?.isDirty === true,
         currentBranch: status?.currentBranch ?? branchList?.currentBranch ?? '',
         branches: branchList?.branches ?? (workspaceBranchStateByCwd.value[normalizedCwd]?.branches ?? []),
+        dirtySummary: status?.dirtySummary ?? { ...EMPTY_WORKSPACE_DIRTY_SUMMARY },
+        dirtyEntries: status?.dirtyEntries ?? [],
         isLoading: false,
         isSwitching: workspaceBranchStateByCwd.value[normalizedCwd]?.isSwitching === true,
         blockedReasons: [],
@@ -721,6 +808,7 @@ export function useDesktopState() {
       activeThreadIds,
       GLOBAL_SERVER_REQUEST_SCOPE,
     )
+    syncWorkspaceBranchBlockedReasons()
   }
 
   function markThreadAsRead(threadId: string): void {
@@ -929,6 +1017,7 @@ export function useDesktopState() {
       request,
       GLOBAL_SERVER_REQUEST_SCOPE,
     )
+    syncWorkspaceBranchBlockedReasons()
   }
 
   function removePendingServerRequestById(requestId: number): void {
@@ -936,6 +1025,38 @@ export function useDesktopState() {
       pendingServerRequestsByThreadId.value,
       requestId,
     )
+    syncWorkspaceBranchBlockedReasons()
+  }
+
+  function mapPersistedRequestsByThreadId(requests: UiPersistedServerRequest[]): Record<string, UiPersistedServerRequest[]> {
+    const next: Record<string, UiPersistedServerRequest[]> = {}
+    for (const request of requests) {
+      const threadId = request.threadId || GLOBAL_SERVER_REQUEST_SCOPE
+      const current = next[threadId] ?? []
+      current.push(request)
+      next[threadId] = current
+    }
+    for (const [threadId, rows] of Object.entries(next)) {
+      next[threadId] = rows.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
+    }
+    return next
+  }
+
+  function replacePersistedServerRequests(requests: UiPersistedServerRequest[]): void {
+    persistedServerRequestsByThreadId.value = mapPersistedRequestsByThreadId(requests)
+    syncWorkspaceBranchBlockedReasons()
+  }
+
+  function removePersistedServerRequestById(requestId: number): void {
+    const next: Record<string, UiPersistedServerRequest[]> = {}
+    for (const [threadId, requests] of Object.entries(persistedServerRequestsByThreadId.value)) {
+      const filtered = requests.filter((request) => request.id !== requestId)
+      if (filtered.length > 0) {
+        next[threadId] = filtered
+      }
+    }
+    persistedServerRequestsByThreadId.value = next
+    syncWorkspaceBranchBlockedReasons()
   }
 
   function handleServerRequestNotification(notification: RpcNotification): boolean {
@@ -951,6 +1072,7 @@ export function useDesktopState() {
       const id = row?.id
       if (typeof id === 'number' && Number.isInteger(id)) {
         removePendingServerRequestById(id)
+        removePersistedServerRequestById(id)
       }
       return true
     }
@@ -1693,6 +1815,7 @@ export function useDesktopState() {
       startAutoRefreshTimer()
     }
     void loadPendingServerRequestsFromBridge()
+    void loadPersistedServerRequestsFromBridge()
     stopNotificationStream = subscribeCodexNotifications((notification) => {
       applyRealtimeUpdates(notification)
       queueEventDrivenSync(notification)
@@ -1708,8 +1831,18 @@ export function useDesktopState() {
           upsertPendingServerRequest(request)
         }
       }
+      syncWorkspaceBranchBlockedReasons()
     } catch {
       // Keep UI usable when pending request endpoint is temporarily unavailable.
+    }
+  }
+
+  async function loadPersistedServerRequestsFromBridge(): Promise<void> {
+    try {
+      const rows = await getPersistedServerRequests()
+      replacePersistedServerRequests(rows)
+    } catch {
+      // Keep UI usable when persisted request endpoint is temporarily unavailable.
     }
   }
 
@@ -1720,6 +1853,7 @@ export function useDesktopState() {
         error: reply.error,
       })
       removePendingServerRequestById(reply.id)
+      removePersistedServerRequestById(reply.id)
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Failed to reply to server request'
     }
@@ -1802,6 +1936,7 @@ export function useDesktopState() {
     selectedThread,
     selectedThreadScrollState,
     selectedThreadServerRequests,
+    selectedThreadPersistedServerRequests,
     selectedThreadFileChanges,
     selectedQueuedMessages,
     selectedWorkspaceBranchState,

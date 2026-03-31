@@ -1,4 +1,5 @@
 import {
+  fetchPersistedServerRequests,
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
   fetchPendingServerRequests,
@@ -28,7 +29,11 @@ import {
 import type {
   ChatMode,
   UiMessage,
+  UiPersistedServerRequest,
   UiProjectGroup,
+  UiWorkspaceDirtyEntry,
+  UiWorkspaceDirtyKind,
+  UiWorkspaceDirtySummary,
   UiTurnFileChanges,
   UiWorkspaceBranchList,
   UiWorkspaceGitStatus,
@@ -84,6 +89,15 @@ type FetchJsonOptions = {
   method?: 'GET' | 'POST'
   body?: unknown
   signal?: AbortSignal
+}
+
+const EMPTY_WORKSPACE_DIRTY_SUMMARY: UiWorkspaceDirtySummary = {
+  trackedModified: 0,
+  staged: 0,
+  untracked: 0,
+  conflicted: 0,
+  renamed: 0,
+  deleted: 0,
 }
 
 function isAbortError(error: unknown): boolean {
@@ -144,6 +158,89 @@ function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''
+}
+
+function normalizeWorkspaceDirtyKind(value: unknown): UiWorkspaceDirtyKind {
+  const allowed: UiWorkspaceDirtyKind[] = [
+    'modified',
+    'added',
+    'deleted',
+    'renamed',
+    'untracked',
+    'conflicted',
+    'unknown',
+  ]
+  return typeof value === 'string' && allowed.includes(value as UiWorkspaceDirtyKind)
+    ? (value as UiWorkspaceDirtyKind)
+    : 'unknown'
+}
+
+function normalizeWorkspaceDirtySummary(value: unknown): UiWorkspaceDirtySummary {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...EMPTY_WORKSPACE_DIRTY_SUMMARY }
+  }
+  const row = value as Partial<UiWorkspaceDirtySummary>
+  return {
+    trackedModified: typeof row.trackedModified === 'number' && Number.isFinite(row.trackedModified)
+      ? Math.max(0, Math.trunc(row.trackedModified))
+      : 0,
+    staged: typeof row.staged === 'number' && Number.isFinite(row.staged)
+      ? Math.max(0, Math.trunc(row.staged))
+      : 0,
+    untracked: typeof row.untracked === 'number' && Number.isFinite(row.untracked)
+      ? Math.max(0, Math.trunc(row.untracked))
+      : 0,
+    conflicted: typeof row.conflicted === 'number' && Number.isFinite(row.conflicted)
+      ? Math.max(0, Math.trunc(row.conflicted))
+      : 0,
+    renamed: typeof row.renamed === 'number' && Number.isFinite(row.renamed)
+      ? Math.max(0, Math.trunc(row.renamed))
+      : 0,
+    deleted: typeof row.deleted === 'number' && Number.isFinite(row.deleted)
+      ? Math.max(0, Math.trunc(row.deleted))
+      : 0,
+  }
+}
+
+function normalizeWorkspaceDirtyEntries(value: unknown): UiWorkspaceDirtyEntry[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Partial<UiWorkspaceDirtyEntry>
+      const path = typeof row.path === 'string' ? row.path.trim() : ''
+      if (!path) return null
+      return {
+        path,
+        x: typeof row.x === 'string' ? row.x.trim().slice(0, 1) : '',
+        y: typeof row.y === 'string' ? row.y.trim().slice(0, 1) : '',
+        kind: normalizeWorkspaceDirtyKind(row.kind),
+        staged: row.staged === true,
+        unstaged: row.unstaged === true,
+      } satisfies UiWorkspaceDirtyEntry
+    })
+    .filter((entry): entry is UiWorkspaceDirtyEntry => entry !== null)
+}
+
+function normalizePersistedServerRequest(value: unknown): UiPersistedServerRequest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Partial<UiPersistedServerRequest>
+  const id = typeof row.id === 'number' && Number.isInteger(row.id) ? row.id : null
+  const method = typeof row.method === 'string' ? row.method.trim() : ''
+  const receivedAtIso = typeof row.receivedAtIso === 'string' ? row.receivedAtIso : ''
+  if (id === null || !method || !receivedAtIso) return null
+  return {
+    id,
+    method,
+    threadId: typeof row.threadId === 'string' ? row.threadId.trim() : '',
+    turnId: typeof row.turnId === 'string' ? row.turnId.trim() : '',
+    itemId: typeof row.itemId === 'string' ? row.itemId.trim() : '',
+    cwd: typeof row.cwd === 'string' ? row.cwd.trim() : '',
+    receivedAtIso,
+    resolvedAtIso: typeof row.resolvedAtIso === 'string' && row.resolvedAtIso.trim().length > 0 ? row.resolvedAtIso : null,
+    resolutionKind: typeof row.resolutionKind === 'string' && row.resolutionKind.trim().length > 0 ? row.resolutionKind : null,
+    params: row.params ?? null,
+  }
 }
 
 function toModelReasoningSupport(model: Model): ModelReasoningSupport {
@@ -266,6 +363,13 @@ export async function replyToServerRequest(
 
 export async function getPendingServerRequests(): Promise<unknown[]> {
   return fetchPendingServerRequests()
+}
+
+export async function getPersistedServerRequests(): Promise<UiPersistedServerRequest[]> {
+  const rows = await fetchPersistedServerRequests()
+  return rows
+    .map((row) => normalizePersistedServerRequest(row))
+    .filter((row): row is UiPersistedServerRequest => row !== null)
 }
 
 export async function resumeThread(threadId: string): Promise<void> {
@@ -618,6 +722,8 @@ export async function fetchWorkspaceGitStatus(cwd: string): Promise<UiWorkspaceG
     isRepo: payload.isRepo === true,
     isDirty: payload.isDirty === true,
     currentBranch: typeof payload.currentBranch === 'string' ? payload.currentBranch.trim() : '',
+    dirtySummary: normalizeWorkspaceDirtySummary(payload.dirtySummary),
+    dirtyEntries: normalizeWorkspaceDirtyEntries(payload.dirtyEntries),
   }
 }
 

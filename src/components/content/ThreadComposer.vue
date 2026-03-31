@@ -164,6 +164,41 @@
               <p v-else class="thread-composer-branch-menu-hint">
                 {{ tUi(normalizedLanguage, 'composer.branchWorkspaceHint') }}
               </p>
+              <div
+                v-if="branchDirtySummaryLabels.length > 0"
+                class="thread-composer-branch-dirty-summary"
+              >
+                <span
+                  v-for="label in branchDirtySummaryLabels"
+                  :key="label"
+                  class="thread-composer-branch-dirty-chip"
+                >
+                  {{ label }}
+                </span>
+              </div>
+              <div
+                v-if="branchDirtyPreviewPaths.length > 0"
+                class="thread-composer-branch-dirty-preview"
+              >
+                <p class="thread-composer-branch-dirty-preview-title">
+                  {{ tUi(normalizedLanguage, 'composer.branchDirtyEntriesTitle') }}
+                </p>
+                <ul class="thread-composer-branch-dirty-preview-list">
+                  <li
+                    v-for="path in branchDirtyPreviewPaths"
+                    :key="path"
+                    class="thread-composer-branch-dirty-preview-item"
+                  >
+                    {{ path }}
+                  </li>
+                </ul>
+                <p
+                  v-if="branchDirtyOverflowCount > 0"
+                  class="thread-composer-branch-dirty-preview-more"
+                >
+                  {{ tUi(normalizedLanguage, 'composer.branchDirtyEntriesMore', { count: branchDirtyOverflowCount }) }}
+                </p>
+              </div>
 
               <p v-if="isBranchLoading" class="thread-composer-branch-menu-empty">
                 {{ tUi(normalizedLanguage, 'composer.branchLoading') }}
@@ -442,6 +477,40 @@ const branchBlockedReasons = computed<WorkspaceBranchBlockReason[]>(() => props.
 const isBranchActionBlocked = computed(() =>
   props.disabled === true || branchBlockedReasons.value.length > 0,
 )
+const branchDirtySummaryLabels = computed(() => {
+  const summary = props.workspaceBranchState?.dirtySummary
+  if (!summary) return []
+  const labels: string[] = []
+  if (summary.trackedModified > 0) {
+    labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyTrackedModified', { count: summary.trackedModified }))
+  }
+  if (summary.staged > 0) {
+    labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyStaged', { count: summary.staged }))
+  }
+  if (summary.untracked > 0) {
+    labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyUntracked', { count: summary.untracked }))
+  }
+  if (summary.conflicted > 0) {
+    labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyConflicted', { count: summary.conflicted }))
+  }
+  if (summary.renamed > 0) {
+    labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyRenamed', { count: summary.renamed }))
+  }
+  if (summary.deleted > 0) {
+    labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyDeleted', { count: summary.deleted }))
+  }
+  return labels
+})
+const branchDirtyPreviewPaths = computed(() =>
+  (props.workspaceBranchState?.dirtyEntries ?? [])
+    .map((entry) => entry.path.trim())
+    .filter((path) => path.length > 0)
+    .slice(0, 4),
+)
+const branchDirtyOverflowCount = computed(() => {
+  const total = props.workspaceBranchState?.dirtyEntries?.length ?? 0
+  return Math.max(0, total - branchDirtyPreviewPaths.value.length)
+})
 const availableBranches = computed(() => {
   const branches = props.workspaceBranchState?.branches ?? []
   const current = currentBranchName.value
@@ -455,6 +524,8 @@ function getBranchBlockedReasonLabel(reason: WorkspaceBranchBlockReason): string
   if (reason === 'not_repo') return tUi(normalizedLanguage.value, 'composer.branchBlockedNotRepo')
   if (reason === 'workspace_dirty') return tUi(normalizedLanguage.value, 'composer.branchBlockedDirty')
   if (reason === 'thread_in_progress') return tUi(normalizedLanguage.value, 'composer.branchBlockedInProgress')
+  if (reason === 'pending_server_requests') return tUi(normalizedLanguage.value, 'composer.branchBlockedPendingRequests')
+  if (reason === 'persisted_server_requests') return tUi(normalizedLanguage.value, 'composer.branchBlockedPersistedRequests')
   return tUi(normalizedLanguage.value, 'composer.branchBlockedQueued')
 }
 const branchBlockedSummary = computed(() => branchBlockedReasons.value.map(getBranchBlockedReasonLabel).join(' · '))
@@ -1006,6 +1077,34 @@ watch(
 }
 
 .thread-composer-branch-menu-hint {
+  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+}
+
+.thread-composer-branch-dirty-summary {
+  @apply mt-2 flex flex-wrap gap-1;
+}
+
+.thread-composer-branch-dirty-chip {
+  @apply rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] leading-4 text-amber-800;
+}
+
+.thread-composer-branch-dirty-preview {
+  @apply mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-2;
+}
+
+.thread-composer-branch-dirty-preview-title {
+  @apply m-0 text-[10px] font-medium text-zinc-700;
+}
+
+.thread-composer-branch-dirty-preview-list {
+  @apply mt-1 list-none p-0 m-0 flex flex-col gap-1;
+}
+
+.thread-composer-branch-dirty-preview-item {
+  @apply text-[10px] leading-4 text-zinc-600 break-all;
+}
+
+.thread-composer-branch-dirty-preview-more {
   @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
 }
 

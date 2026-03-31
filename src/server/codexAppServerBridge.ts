@@ -1,8 +1,8 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { tmpdir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -42,6 +42,22 @@ type PendingServerRequest = {
   receivedAtIso: string
 }
 
+type PersistedServerRequest = {
+  id: number
+  method: string
+  threadId: string
+  turnId: string
+  itemId: string
+  cwd: string
+  params: unknown
+  receivedAtIso: string
+  resolvedAtIso: string | null
+  resolutionKind: string | null
+}
+
+const PERSISTED_SERVER_REQUEST_UNRESOLVED_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const PERSISTED_SERVER_REQUEST_RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -80,6 +96,20 @@ function normalizePreviewPath(rawPath: string): string {
   return resolve(process.cwd(), trimmed)
 }
 
+function getPersistedServerRequestsLedgerPath(): string {
+  const codexHome = process.env.CODEX_HOME?.trim()
+  const baseDir = codexHome && codexHome.length > 0
+    ? codexHome
+    : join(homedir(), '.codex')
+  return join(baseDir, 'codex-web-local', 'persisted-server-requests.json')
+}
+
+function parseTimestampMs(value: string | null): number | null {
+  if (!value) return null
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? null : timestamp
+}
+
 function runGit(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -100,6 +130,51 @@ type WorkspaceFileChange = {
   diff: string
 }
 
+type WorkspaceDirtyKind =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted'
+  | 'unknown'
+
+type WorkspaceDirtyEntry = {
+  path: string
+  x: string
+  y: string
+  kind: WorkspaceDirtyKind
+  staged: boolean
+  unstaged: boolean
+}
+
+type WorkspaceDirtySummary = {
+  trackedModified: number
+  staged: number
+  untracked: number
+  conflicted: number
+  renamed: number
+  deleted: number
+}
+
+type WorkspaceGitStatus = {
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+  dirtySummary: WorkspaceDirtySummary
+  dirtyEntries: WorkspaceDirtyEntry[]
+}
+
+const EMPTY_WORKSPACE_DIRTY_SUMMARY: WorkspaceDirtySummary = {
+  trackedModified: 0,
+  staged: 0,
+  untracked: 0,
+  conflicted: 0,
+  renamed: 0,
+  deleted: 0,
+}
+
 function parseNumstat(output: string): Array<{ path: string; additions: number; deletions: number }> {
   const rows: Array<{ path: string; additions: number; deletions: number }> = []
   const lines = output.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
@@ -115,6 +190,87 @@ function parseNumstat(output: string): Array<{ path: string; additions: number; 
     })
   }
   return rows
+}
+
+function isConflictStatus(x: string, y: string): boolean {
+  if (x === 'U' || y === 'U') return true
+  const pair = `${x}${y}`
+  return pair === 'DD' || pair === 'AA'
+}
+
+function classifyWorkspaceDirtyKind(x: string, y: string, path: string): WorkspaceDirtyKind {
+  if (!path) return 'unknown'
+  if (x === '?' && y === '?') return 'untracked'
+  if (isConflictStatus(x, y)) return 'conflicted'
+  if (x === 'R' || y === 'R' || x === 'C' || y === 'C') return 'renamed'
+  if (x === 'D' || y === 'D') return 'deleted'
+  if (x === 'A' || y === 'A') return 'added'
+  if (
+    x === 'M' || y === 'M' ||
+    x === 'T' || y === 'T'
+  ) {
+    return 'modified'
+  }
+  return 'unknown'
+}
+
+function normalizeStatusPathSegment(rawPath: string): string {
+  const trimmed = rawPath.trim()
+  if (!trimmed) return ''
+  const renameSeparator = ' -> '
+  if (trimmed.includes(renameSeparator)) {
+    const [, nextPath = ''] = trimmed.split(renameSeparator)
+    return nextPath.trim()
+  }
+  return trimmed
+}
+
+function parseWorkspaceDirtyEntries(output: string): WorkspaceDirtyEntry[] {
+  const lines = output.split('\n').filter((line) => line.trim().length > 0)
+  const entries: WorkspaceDirtyEntry[] = []
+  for (const line of lines) {
+    if (line.length < 3) continue
+    const x = line[0] ?? ' '
+    const y = line[1] ?? ' '
+    const path = normalizeStatusPathSegment(line.slice(3))
+    if (!path) continue
+    entries.push({
+      path,
+      x,
+      y,
+      kind: classifyWorkspaceDirtyKind(x, y, path),
+      staged: x !== ' ' && x !== '?',
+      unstaged: y !== ' ' && y !== '?',
+    })
+  }
+  return entries.sort((first, second) => first.path.localeCompare(second.path))
+}
+
+function summarizeWorkspaceDirtyEntries(entries: WorkspaceDirtyEntry[]): WorkspaceDirtySummary {
+  const summary: WorkspaceDirtySummary = { ...EMPTY_WORKSPACE_DIRTY_SUMMARY }
+  for (const entry of entries) {
+    if (entry.staged) {
+      summary.staged += 1
+    }
+    if (entry.kind === 'untracked') {
+      summary.untracked += 1
+      continue
+    }
+    if (entry.kind === 'conflicted') {
+      summary.conflicted += 1
+      continue
+    }
+    if (entry.kind === 'renamed') {
+      summary.renamed += 1
+      continue
+    }
+    if (entry.kind === 'deleted') {
+      summary.deleted += 1
+      continue
+    }
+    summary.trackedModified += 1
+  }
+  return summary
 }
 
 async function collectWorkspaceChanges(cwd: string): Promise<WorkspaceFileChange[]> {
@@ -172,12 +328,7 @@ async function isGitWorkspace(cwd: string): Promise<boolean> {
   }
 }
 
-async function readWorkspaceGitStatus(cwd: string): Promise<{
-  cwd: string
-  isRepo: boolean
-  isDirty: boolean
-  currentBranch: string
-}> {
+async function readWorkspaceGitStatus(cwd: string): Promise<WorkspaceGitStatus> {
   const targetCwd = resolve(cwd)
   const isRepo = await isGitWorkspace(targetCwd)
   if (!isRepo) {
@@ -186,19 +337,24 @@ async function readWorkspaceGitStatus(cwd: string): Promise<{
       isRepo: false,
       isDirty: false,
       currentBranch: '',
+      dirtySummary: { ...EMPTY_WORKSPACE_DIRTY_SUMMARY },
+      dirtyEntries: [],
     }
   }
 
   const [statusOutput, branchOutput] = await Promise.all([
-    runGit(['status', '--porcelain'], targetCwd),
+    runGit(['status', '--porcelain=v1', '-uall'], targetCwd),
     runGit(['branch', '--show-current'], targetCwd).catch(() => ''),
   ])
+  const dirtyEntries = parseWorkspaceDirtyEntries(statusOutput)
 
   return {
     cwd: targetCwd,
     isRepo: true,
-    isDirty: statusOutput.trim().length > 0,
+    isDirty: dirtyEntries.length > 0,
     currentBranch: branchOutput.trim(),
+    dirtySummary: summarizeWorkspaceDirtyEntries(dirtyEntries),
+    dirtyEntries,
   }
 }
 
@@ -293,6 +449,9 @@ class AppServerProcess {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
+  private readonly persistedServerRequests = new Map<number, PersistedServerRequest>()
+  private persistedServerRequestsLoaded: Promise<void> | null = null
+  private persistedServerRequestsFlushChain: Promise<void> = Promise.resolve()
 
   private start(): void {
     if (this.process) return
@@ -404,12 +563,132 @@ class AppServerProcess {
     })
   }
 
+  private async ensurePersistedServerRequestsLoaded(): Promise<void> {
+    if (this.persistedServerRequestsLoaded) {
+      await this.persistedServerRequestsLoaded
+      return
+    }
+
+    this.persistedServerRequestsLoaded = (async () => {
+      try {
+        const raw = await readFile(getPersistedServerRequestsLedgerPath(), 'utf8')
+        const payload = JSON.parse(raw) as { requests?: unknown[] } | null
+        const rows = Array.isArray(payload?.requests) ? payload.requests : []
+        this.persistedServerRequests.clear()
+        for (const row of rows) {
+          const record = asRecord(row)
+          const id = record?.id
+          const method = typeof record?.method === 'string' ? record.method : ''
+          const receivedAtIso = typeof record?.receivedAtIso === 'string' ? record.receivedAtIso : ''
+          if (typeof id !== 'number' || !Number.isInteger(id) || !method || !receivedAtIso) continue
+          this.persistedServerRequests.set(id, {
+            id,
+            method,
+            threadId: typeof record?.threadId === 'string' ? record.threadId : '',
+            turnId: typeof record?.turnId === 'string' ? record.turnId : '',
+            itemId: typeof record?.itemId === 'string' ? record.itemId : '',
+            cwd: typeof record?.cwd === 'string' ? record.cwd : '',
+            params: record?.params ?? null,
+            receivedAtIso,
+            resolvedAtIso: typeof record?.resolvedAtIso === 'string' ? record.resolvedAtIso : null,
+            resolutionKind: typeof record?.resolutionKind === 'string' ? record.resolutionKind : null,
+          })
+        }
+        if (this.prunePersistedServerRequests()) {
+          this.queuePersistedServerRequestsFlush()
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : ''
+        if (!message.includes('enoent')) {
+          console.warn('[codex-web-local] Failed to load persisted server requests:', error)
+        }
+      }
+    })()
+
+    await this.persistedServerRequestsLoaded
+  }
+
+  private prunePersistedServerRequests(nowMs = Date.now()): boolean {
+    let changed = false
+    for (const [requestId, request] of this.persistedServerRequests.entries()) {
+      const resolvedAtMs = parseTimestampMs(request.resolvedAtIso)
+      if (resolvedAtMs !== null) {
+        if (nowMs - resolvedAtMs > PERSISTED_SERVER_REQUEST_RESOLVED_RETENTION_MS) {
+          this.persistedServerRequests.delete(requestId)
+          changed = true
+        }
+        continue
+      }
+      const receivedAtMs = parseTimestampMs(request.receivedAtIso)
+      if (receivedAtMs !== null && nowMs - receivedAtMs > PERSISTED_SERVER_REQUEST_UNRESOLVED_TTL_MS) {
+        this.persistedServerRequests.delete(requestId)
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  private queuePersistedServerRequestsFlush(): void {
+    this.persistedServerRequestsFlushChain = this.persistedServerRequestsFlushChain
+      .catch(() => {})
+      .then(async () => {
+        this.prunePersistedServerRequests()
+        const ledgerPath = getPersistedServerRequestsLedgerPath()
+        await mkdir(dirname(ledgerPath), { recursive: true })
+        const payload = {
+          version: 1,
+          requests: Array.from(this.persistedServerRequests.values()).sort((first, second) =>
+            first.receivedAtIso.localeCompare(second.receivedAtIso),
+          ),
+        }
+        await writeFile(ledgerPath, JSON.stringify(payload, null, 2), 'utf8')
+      })
+      .catch((error) => {
+        console.warn('[codex-web-local] Failed to persist server requests:', error)
+      })
+  }
+
+  private async upsertPersistedServerRequest(record: PersistedServerRequest): Promise<void> {
+    await this.ensurePersistedServerRequestsLoaded()
+    this.persistedServerRequests.set(record.id, record)
+    this.queuePersistedServerRequestsFlush()
+  }
+
+  private async markPersistedServerRequestResolved(requestId: number, resolutionKind: string): Promise<void> {
+    await this.ensurePersistedServerRequestsLoaded()
+    const current = this.persistedServerRequests.get(requestId)
+    if (!current) return
+    this.persistedServerRequests.set(requestId, {
+      ...current,
+      resolvedAtIso: new Date().toISOString(),
+      resolutionKind,
+    })
+    this.queuePersistedServerRequestsFlush()
+  }
+
+  private toPersistedServerRequest(pendingRequest: PendingServerRequest): PersistedServerRequest {
+    const requestParams = asRecord(pendingRequest.params)
+    return {
+      id: pendingRequest.id,
+      method: pendingRequest.method,
+      threadId: typeof requestParams?.threadId === 'string' ? requestParams.threadId : '',
+      turnId: typeof requestParams?.turnId === 'string' ? requestParams.turnId : '',
+      itemId: typeof requestParams?.itemId === 'string' ? requestParams.itemId : '',
+      cwd: typeof requestParams?.cwd === 'string' ? requestParams.cwd : '',
+      params: pendingRequest.params,
+      receivedAtIso: pendingRequest.receivedAtIso,
+      resolvedAtIso: null,
+      resolutionKind: null,
+    }
+  }
+
   private resolvePendingServerRequest(requestId: number, reply: ServerRequestReply): void {
     const pendingRequest = this.pendingServerRequests.get(requestId)
     if (!pendingRequest) {
       throw new Error(`No pending server request found for id ${String(requestId)}`)
     }
     this.pendingServerRequests.delete(requestId)
+    void this.markPersistedServerRequestResolved(requestId, reply.error ? 'rejected' : 'resolved')
 
     this.sendServerRequestReply(requestId, reply)
     const requestParams = asRecord(pendingRequest.params)
@@ -437,6 +716,7 @@ class AppServerProcess {
       receivedAtIso: new Date().toISOString(),
     }
     this.pendingServerRequests.set(requestId, pendingRequest)
+    void this.upsertPersistedServerRequest(this.toPersistedServerRequest(pendingRequest))
 
     this.emitNotification({
       method: 'server/request',
@@ -519,6 +799,16 @@ class AppServerProcess {
 
   listPendingServerRequests(): PendingServerRequest[] {
     return Array.from(this.pendingServerRequests.values())
+  }
+
+  async listPersistedServerRequests(): Promise<PersistedServerRequest[]> {
+    await this.ensurePersistedServerRequestsLoaded()
+    if (this.prunePersistedServerRequests()) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    return Array.from(this.persistedServerRequests.values())
+      .filter((request) => request.resolvedAtIso === null)
+      .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   }
 
   dispose(): void {
@@ -730,6 +1020,11 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'GET' && url.pathname === '/codex-api/server-requests/pending') {
         setJson(res, 200, { data: appServer.listPendingServerRequests() })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/server-requests/persisted') {
+        setJson(res, 200, { data: await appServer.listPersistedServerRequests() })
         return
       }
 

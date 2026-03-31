@@ -238,3 +238,29 @@ export async function fetchPendingServerRequests(): Promise<unknown[]> {
   const data = record?.data
   return Array.isArray(data) ? data : []
 }
+
+export async function fetchPersistedServerRequests(): Promise<unknown[]> {
+  const response = await fetch('/codex-api/server-requests/persisted')
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Persisted server requests failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'server-requests/persisted',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data) ? data : []
+}

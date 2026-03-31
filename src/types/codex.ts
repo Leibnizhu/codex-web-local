@@ -122,6 +122,19 @@ export type UiServerRequest = {
   params: unknown
 }
 
+export type UiPersistedServerRequest = {
+  id: number
+  method: string
+  threadId: string
+  turnId: string
+  itemId: string
+  cwd: string
+  receivedAtIso: string
+  resolvedAtIso: string | null
+  resolutionKind: string | null
+  params: unknown
+}
+
 export type UiServerRequestReply = {
   id: number
   result?: unknown
@@ -162,12 +175,43 @@ export type WorkspaceBranchBlockReason =
   | 'workspace_dirty'
   | 'thread_in_progress'
   | 'queued_messages'
+  | 'pending_server_requests'
+  | 'persisted_server_requests'
+
+export type UiWorkspaceDirtyKind =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted'
+  | 'unknown'
+
+export type UiWorkspaceDirtyEntry = {
+  path: string
+  x: string
+  y: string
+  kind: UiWorkspaceDirtyKind
+  staged: boolean
+  unstaged: boolean
+}
+
+export type UiWorkspaceDirtySummary = {
+  trackedModified: number
+  staged: number
+  untracked: number
+  conflicted: number
+  renamed: number
+  deleted: number
+}
 
 export type UiWorkspaceGitStatus = {
   cwd: string
   isRepo: boolean
   isDirty: boolean
   currentBranch: string
+  dirtySummary: UiWorkspaceDirtySummary
+  dirtyEntries: UiWorkspaceDirtyEntry[]
 }
 
 export type UiWorkspaceBranchList = {
@@ -183,6 +227,8 @@ export type UiWorkspaceBranchState = {
   isDirty: boolean
   currentBranch: string
   branches: string[]
+  dirtySummary: UiWorkspaceDirtySummary
+  dirtyEntries: UiWorkspaceDirtyEntry[]
   isLoading: boolean
   isSwitching: boolean
   blockedReasons: WorkspaceBranchBlockReason[]

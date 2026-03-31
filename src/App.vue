@@ -171,6 +171,38 @@
             </div>
 
             <div class="content-composer-row">
+              <section
+                v-if="workspaceDirtyHiddenNotice"
+                class="content-workspace-guard-hint"
+                aria-live="polite"
+              >
+                <p class="content-workspace-guard-hint-title">{{ t('app.workspaceDirtyHiddenTitle') }}</p>
+                <p class="content-workspace-guard-hint-text">{{ t('app.workspaceDirtyHiddenHint') }}</p>
+                <div class="content-workspace-guard-hint-tags">
+                  <span
+                    v-for="label in workspaceDirtySummaryLabels"
+                    :key="label"
+                    class="content-workspace-guard-hint-tag"
+                  >
+                    {{ label }}
+                  </span>
+                </div>
+                <div v-if="workspaceDirtyPreviewPaths.length > 0" class="content-workspace-guard-hint-paths">
+                  <span
+                    v-for="path in workspaceDirtyPreviewPaths"
+                    :key="path"
+                    class="content-workspace-guard-hint-path"
+                  >
+                    {{ path }}
+                  </span>
+                  <span
+                    v-if="workspaceDirtyOverflowCount > 0"
+                    class="content-workspace-guard-hint-more"
+                  >
+                    {{ t('app.workspaceDirtyHiddenMore', { count: workspaceDirtyOverflowCount }) }}
+                  </span>
+                </div>
+              </section>
               <section v-if="selectedQueuedMessages.length > 0" class="content-queued-messages" aria-live="polite">
                 <p class="content-queued-messages-title">{{ t('app.queuedMessagesTitle', { count: selectedQueuedMessages.length }) }}</p>
                 <ul class="content-queued-messages-list">
@@ -419,6 +451,48 @@ const canOpenWorkspaceDiff = computed(() => {
   if (isHomeRoute.value) return false
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   return cwd.length > 0
+})
+function buildWorkspaceDirtySummaryLabels(): string[] {
+  const summary = selectedWorkspaceBranchState.value?.dirtySummary
+  if (!summary) return []
+  const labels: string[] = []
+  if (summary.trackedModified > 0) {
+    labels.push(t('composer.branchDirtyTrackedModified', { count: summary.trackedModified }))
+  }
+  if (summary.staged > 0) {
+    labels.push(t('composer.branchDirtyStaged', { count: summary.staged }))
+  }
+  if (summary.untracked > 0) {
+    labels.push(t('composer.branchDirtyUntracked', { count: summary.untracked }))
+  }
+  if (summary.conflicted > 0) {
+    labels.push(t('composer.branchDirtyConflicted', { count: summary.conflicted }))
+  }
+  if (summary.renamed > 0) {
+    labels.push(t('composer.branchDirtyRenamed', { count: summary.renamed }))
+  }
+  if (summary.deleted > 0) {
+    labels.push(t('composer.branchDirtyDeleted', { count: summary.deleted }))
+  }
+  return labels
+}
+const workspaceDirtySummaryLabels = computed(() => buildWorkspaceDirtySummaryLabels())
+const workspaceDirtyPreviewPaths = computed(() =>
+  (selectedWorkspaceBranchState.value?.dirtyEntries ?? [])
+    .map((entry) => entry.path.trim())
+    .filter((path) => path.length > 0)
+    .slice(0, 4),
+)
+const workspaceDirtyOverflowCount = computed(() => {
+  const total = selectedWorkspaceBranchState.value?.dirtyEntries.length ?? 0
+  return Math.max(0, total - workspaceDirtyPreviewPaths.value.length)
+})
+const workspaceDirtyHiddenNotice = computed(() => {
+  if (isHomeRoute.value) return false
+  const state = selectedWorkspaceBranchState.value
+  if (!state || state.isDirty !== true) return false
+  if (state.dirtyEntries.length === 0) return false
+  return workspaceDiffTotals.value.additions === 0 && workspaceDiffTotals.value.deletions === 0
 })
 const previewMatchedDiff = computed(() => {
   const preview = previewPanel.value
@@ -1058,6 +1132,38 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 
 .content-composer-row {
   @apply min-h-0 flex flex-col gap-2;
+}
+
+.content-workspace-guard-hint {
+  @apply w-full max-w-175 mx-auto rounded-lg border border-amber-200 bg-amber-50 px-4 py-3;
+}
+
+.content-workspace-guard-hint-title {
+  @apply m-0 text-[12px] font-semibold text-amber-900;
+}
+
+.content-workspace-guard-hint-text {
+  @apply m-0 mt-1 text-[11px] leading-4 text-amber-800;
+}
+
+.content-workspace-guard-hint-tags {
+  @apply mt-2 flex flex-wrap gap-1;
+}
+
+.content-workspace-guard-hint-tag {
+  @apply rounded-full border border-amber-300 bg-white/70 px-2 py-0.5 text-[10px] leading-4 text-amber-900;
+}
+
+.content-workspace-guard-hint-paths {
+  @apply mt-2 flex flex-wrap gap-1.5;
+}
+
+.content-workspace-guard-hint-path {
+  @apply rounded-md bg-white/70 px-2 py-1 text-[10px] leading-4 text-amber-900 break-all;
+}
+
+.content-workspace-guard-hint-more {
+  @apply rounded-md border border-amber-300 px-2 py-1 text-[10px] leading-4 text-amber-800;
 }
 
 .content-queued-messages {

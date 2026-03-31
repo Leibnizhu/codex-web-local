@@ -80,6 +80,18 @@ const UI_TEXT = {
     zh: ({ time }) => `排队于 ${String(time)}`,
     en: ({ time }) => `Queued at ${String(time)}`,
   },
+  'app.workspaceDirtyHiddenTitle': {
+    zh: '工作区仍有未直接显示在 diff 中的 Git 状态',
+    en: 'The workspace still has Git states that are not shown in the diff',
+  },
+  'app.workspaceDirtyHiddenHint': {
+    zh: '这些状态同样会阻塞分支切换，例如未跟踪文件、冲突或重命名。',
+    en: 'These states also block branch switching, such as untracked files, conflicts, or renames.',
+  },
+  'app.workspaceDirtyHiddenMore': {
+    zh: ({ count }) => `另有 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} more`,
+  },
   'composer.model': {
     zh: '模型',
     en: 'Model',
@@ -143,6 +155,46 @@ const UI_TEXT = {
   'composer.branchBlockedQueued': {
     zh: '有排队中的消息待发送',
     en: 'Queued messages are pending',
+  },
+  'composer.branchBlockedPendingRequests': {
+    zh: '有待处理的审批请求',
+    en: 'Pending approval requests exist',
+  },
+  'composer.branchBlockedPersistedRequests': {
+    zh: '检测到未闭合审批记录',
+    en: 'Detected unresolved approval records',
+  },
+  'composer.branchDirtyTrackedModified': {
+    zh: ({ count }) => `已修改 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} modified`,
+  },
+  'composer.branchDirtyStaged': {
+    zh: ({ count }) => `已暂存 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} staged`,
+  },
+  'composer.branchDirtyUntracked': {
+    zh: ({ count }) => `未跟踪 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} untracked`,
+  },
+  'composer.branchDirtyConflicted': {
+    zh: ({ count }) => `冲突 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} conflicted`,
+  },
+  'composer.branchDirtyRenamed': {
+    zh: ({ count }) => `重命名 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} renamed`,
+  },
+  'composer.branchDirtyDeleted': {
+    zh: ({ count }) => `删除 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} deleted`,
+  },
+  'composer.branchDirtyEntriesTitle': {
+    zh: '涉及文件',
+    en: 'Affected files',
+  },
+  'composer.branchDirtyEntriesMore': {
+    zh: ({ count }) => `另有 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} more`,
   },
   'composer.quotaRemaining': {
     zh: ({ percent }) => `${String(percent)}% 额度`,
