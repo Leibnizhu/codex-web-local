@@ -333,9 +333,11 @@ export async function getAvailableModelIds(): Promise<string[]> {
   modelReasoningSupportById.clear()
   for (const row of payload.data) {
     const candidate = row.id || row.model
-    if (!candidate || ids.includes(candidate)) continue
-    ids.push(candidate)
-    modelReasoningSupportById.set(candidate, toModelReasoningSupport(row))
+    if (!candidate) continue
+    const normalizedCandidate = candidate.trim()
+    if (!normalizedCandidate || ids.includes(normalizedCandidate)) continue
+    ids.push(normalizedCandidate)
+    modelReasoningSupportById.set(normalizedCandidate, toModelReasoningSupport(row))
   }
   return ids
 }
