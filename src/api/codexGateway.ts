@@ -107,10 +107,22 @@ function toModelReasoningSupport(model: Model): ModelReasoningSupport {
   }
 }
 
+function cloneModelReasoningSupport(
+  support: ModelReasoningSupport,
+): ModelReasoningSupport {
+  return {
+    supported: [...support.supported],
+    defaultEffort: support.defaultEffort,
+  }
+}
+
 export function getModelReasoningSupport(modelId: string): ModelReasoningSupport {
   const normalizedModelId = modelId.trim()
-  if (!normalizedModelId) return EMPTY_MODEL_REASONING_SUPPORT
-  return modelReasoningSupportById.get(normalizedModelId) ?? EMPTY_MODEL_REASONING_SUPPORT
+  if (!normalizedModelId) {
+    return cloneModelReasoningSupport(EMPTY_MODEL_REASONING_SUPPORT)
+  }
+  const support = modelReasoningSupportById.get(normalizedModelId) ?? EMPTY_MODEL_REASONING_SUPPORT
+  return cloneModelReasoningSupport(support)
 }
 
 async function getThreadGroupsV2(): Promise<UiProjectGroup[]> {
