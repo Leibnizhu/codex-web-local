@@ -1,7 +1,5 @@
 # Model Reasoning Filter Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** 让推理程度下拉只展示当前模型真实支持的选项，并在模型切换时自动回退到有效默认值。
 
 **Architecture:** 以 `model/list` 返回的模型能力作为单一事实来源，在 API 层缓存每个模型支持的推理程度和默认值。状态层在模型切换和初始化时校验当前选择，展示层只渲染当前模型支持的选项，并在发送请求前做一次兜底过滤。
