@@ -17,7 +17,7 @@ import type {
   ThreadListResponse,
   ThreadReadResponse,
 } from './appServerDtos'
-import { normalizeCodexApiError } from './codexErrors'
+import { CodexApiError, extractErrorMessage, normalizeCodexApiError } from './codexErrors'
 import {
   normalizeActiveTurnIdV2,
   normalizeLatestTurnFileChangesV2,
@@ -25,7 +25,15 @@ import {
   normalizeThreadInProgressV2,
   normalizeThreadMessagesV2,
 } from './normalizers/v2'
-import type { ChatMode, UiMessage, UiProjectGroup, UiTurnFileChanges, UserInput } from '../types/codex'
+import type {
+  ChatMode,
+  UiMessage,
+  UiProjectGroup,
+  UiTurnFileChanges,
+  UiWorkspaceBranchList,
+  UiWorkspaceGitStatus,
+  UserInput,
+} from '../types/codex'
 
 type CurrentModelConfig = {
   model: string
@@ -72,6 +80,12 @@ type RpcCallOptions = {
   signal?: AbortSignal
 }
 
+type FetchJsonOptions = {
+  method?: 'GET' | 'POST'
+  body?: unknown
+  signal?: AbortSignal
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
@@ -85,6 +99,44 @@ async function callRpc<T>(method: string, params?: unknown, options: RpcCallOpti
     }
     throw normalizeCodexApiError(error, `RPC ${method} failed`, method)
   }
+}
+
+async function fetchJson<T>(path: string, fallback: string, method: string, options: FetchJsonOptions = {}): Promise<T> {
+  const requestMethod = options.method ?? 'GET'
+
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: requestMethod,
+      headers: requestMethod === 'POST'
+        ? { 'Content-Type': 'application/json' }
+        : undefined,
+      body: requestMethod === 'POST' ? JSON.stringify(options.body ?? null) : undefined,
+      signal: options.signal,
+    })
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    throw normalizeCodexApiError(error, fallback, method)
+  }
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(extractErrorMessage(payload, fallback), {
+      code: 'http_error',
+      method,
+      status: response.status,
+    })
+  }
+
+  return payload as T
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
@@ -548,6 +600,93 @@ export async function fetchWorkspaceChanges(cwd: string): Promise<UiTurnFileChan
     totalAdditions,
     totalDeletions,
   }
+}
+
+export async function fetchWorkspaceGitStatus(cwd: string): Promise<UiWorkspaceGitStatus | null> {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return null
+
+  const query = new URLSearchParams({ cwd: normalizedCwd })
+  const payload = await fetchJson<Partial<UiWorkspaceGitStatus>>(
+    `/codex-api/git/status?${query.toString()}`,
+    `Failed to read workspace git status for ${normalizedCwd}`,
+    'git/status',
+  )
+
+  return {
+    cwd: typeof payload.cwd === 'string' && payload.cwd.trim().length > 0 ? payload.cwd : normalizedCwd,
+    isRepo: payload.isRepo === true,
+    isDirty: payload.isDirty === true,
+    currentBranch: typeof payload.currentBranch === 'string' ? payload.currentBranch.trim() : '',
+  }
+}
+
+export async function fetchWorkspaceBranches(cwd: string): Promise<UiWorkspaceBranchList | null> {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return null
+
+  const query = new URLSearchParams({ cwd: normalizedCwd })
+  const payload = await fetchJson<Partial<UiWorkspaceBranchList>>(
+    `/codex-api/git/branches?${query.toString()}`,
+    `Failed to read workspace branches for ${normalizedCwd}`,
+    'git/branches',
+  )
+
+  const branches = Array.isArray(payload.branches)
+    ? payload.branches
+      .filter((branch): branch is string => typeof branch === 'string')
+      .map((branch) => branch.trim())
+      .filter((branch) => branch.length > 0)
+    : []
+
+  return {
+    cwd: typeof payload.cwd === 'string' && payload.cwd.trim().length > 0 ? payload.cwd : normalizedCwd,
+    isRepo: payload.isRepo === true,
+    currentBranch: typeof payload.currentBranch === 'string' ? payload.currentBranch.trim() : '',
+    branches: Array.from(new Set(branches)),
+  }
+}
+
+export async function switchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const normalizedCwd = cwd.trim()
+  const normalizedBranch = branch.trim()
+  if (!normalizedCwd || !normalizedBranch) {
+    throw new Error('Workspace path and branch name are required')
+  }
+
+  await fetchJson<{ ok?: boolean }>(
+    '/codex-api/git/branch/switch',
+    `Failed to switch workspace branch to ${normalizedBranch}`,
+    'git/branch/switch',
+    {
+      method: 'POST',
+      body: {
+        cwd: normalizedCwd,
+        branch: normalizedBranch,
+      },
+    },
+  )
+}
+
+export async function createAndSwitchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const normalizedCwd = cwd.trim()
+  const normalizedBranch = branch.trim()
+  if (!normalizedCwd || !normalizedBranch) {
+    throw new Error('Workspace path and branch name are required')
+  }
+
+  await fetchJson<{ ok?: boolean }>(
+    '/codex-api/git/branch/create-and-switch',
+    `Failed to create workspace branch ${normalizedBranch}`,
+    'git/branch/create-and-switch',
+    {
+      method: 'POST',
+      body: {
+        cwd: normalizedCwd,
+        branch: normalizedBranch,
+      },
+    },
+  )
 }
 
 export async function fetchWorkspaceFullDiff(cwd: string): Promise<string> {

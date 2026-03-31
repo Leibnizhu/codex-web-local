@@ -96,6 +96,54 @@ const UI_TEXT = {
     zh: '分支',
     en: 'Branch',
   },
+  'composer.branchMenuTitle': {
+    zh: '切换或创建分支',
+    en: 'Switch or create branch',
+  },
+  'composer.branchWorkspaceHint': {
+    zh: '分支操作会作用于当前工作区',
+    en: 'Branch actions apply to the current workspace',
+  },
+  'composer.branchLoading': {
+    zh: '正在读取分支...',
+    en: 'Loading branches...',
+  },
+  'composer.branchCurrent': {
+    zh: '当前',
+    en: 'Current',
+  },
+  'composer.branchEmpty': {
+    zh: '当前工作区没有可切换的本地分支',
+    en: 'No local branches available',
+  },
+  'composer.branchCreatePlaceholder': {
+    zh: '输入新分支名',
+    en: 'New branch name',
+  },
+  'composer.branchCreate': {
+    zh: '创建并切换',
+    en: 'Create & switch',
+  },
+  'composer.branchSwitching': {
+    zh: '切换中...',
+    en: 'Switching...',
+  },
+  'composer.branchBlockedNotRepo': {
+    zh: '当前目录不是 Git 仓库',
+    en: 'Current folder is not a Git repository',
+  },
+  'composer.branchBlockedDirty': {
+    zh: '工作区有未提交改动',
+    en: 'Workspace has uncommitted changes',
+  },
+  'composer.branchBlockedInProgress': {
+    zh: '有线程仍在执行中',
+    en: 'A thread is still running',
+  },
+  'composer.branchBlockedQueued': {
+    zh: '有排队中的消息待发送',
+    en: 'Queued messages are pending',
+  },
   'composer.quotaRemaining': {
     zh: ({ percent }) => `${String(percent)}% 额度`,
     en: ({ percent }) => `${String(percent)}% quota`,

@@ -163,6 +163,112 @@ async function collectWorkspaceUnifiedDiff(cwd: string): Promise<string> {
   return [stagedDiff.trimEnd(), unstagedDiff.trimEnd()].filter((part) => part.length > 0).join('\n')
 }
 
+async function isGitWorkspace(cwd: string): Promise<boolean> {
+  try {
+    const output = await runGit(['rev-parse', '--is-inside-work-tree'], resolve(cwd))
+    return output.trim() === 'true'
+  } catch {
+    return false
+  }
+}
+
+async function readWorkspaceGitStatus(cwd: string): Promise<{
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+}> {
+  const targetCwd = resolve(cwd)
+  const isRepo = await isGitWorkspace(targetCwd)
+  if (!isRepo) {
+    return {
+      cwd: targetCwd,
+      isRepo: false,
+      isDirty: false,
+      currentBranch: '',
+    }
+  }
+
+  const [statusOutput, branchOutput] = await Promise.all([
+    runGit(['status', '--porcelain'], targetCwd),
+    runGit(['branch', '--show-current'], targetCwd).catch(() => ''),
+  ])
+
+  return {
+    cwd: targetCwd,
+    isRepo: true,
+    isDirty: statusOutput.trim().length > 0,
+    currentBranch: branchOutput.trim(),
+  }
+}
+
+async function readWorkspaceBranches(cwd: string): Promise<{
+  cwd: string
+  isRepo: boolean
+  currentBranch: string
+  branches: string[]
+}> {
+  const targetCwd = resolve(cwd)
+  const status = await readWorkspaceGitStatus(targetCwd)
+  if (!status.isRepo) {
+    return {
+      cwd: targetCwd,
+      isRepo: false,
+      currentBranch: '',
+      branches: [],
+    }
+  }
+
+  const output = await runGit(['branch', '--list', '--format=%(refname:short)'], targetCwd)
+  const branches = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .sort((first, second) => first.localeCompare(second))
+
+  return {
+    cwd: targetCwd,
+    isRepo: true,
+    currentBranch: status.currentBranch,
+    branches,
+  }
+}
+
+async function assertGitWorkspace(cwd: string): Promise<string> {
+  const targetCwd = resolve(cwd)
+  if (!(await isGitWorkspace(targetCwd))) {
+    throw new Error('Target cwd is not a git repository')
+  }
+  return targetCwd
+}
+
+async function assertValidBranchName(branch: string): Promise<string> {
+  const normalizedBranch = branch.trim()
+  if (!normalizedBranch) {
+    throw new Error('Branch name is required')
+  }
+
+  try {
+    await runGit(['check-ref-format', '--branch', normalizedBranch], process.cwd())
+  } catch {
+    throw new Error('Invalid branch name')
+  }
+
+  return normalizedBranch
+}
+
+async function switchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const targetCwd = await assertGitWorkspace(cwd)
+  const normalizedBranch = await assertValidBranchName(branch)
+  await runGit(['switch', normalizedBranch], targetCwd)
+}
+
+async function createAndSwitchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const targetCwd = await assertGitWorkspace(cwd)
+  const normalizedBranch = await assertValidBranchName(branch)
+  await runGit(['switch', '-c', normalizedBranch], targetCwd)
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Uint8Array[] = []
 
@@ -716,6 +822,68 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 200, { diff: '', warning: message })
           return
         }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/git/status') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+
+        const status = await readWorkspaceGitStatus(cwd)
+        setJson(res, 200, status)
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/git/branches') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+
+        const branches = await readWorkspaceBranches(cwd)
+        setJson(res, 200, branches)
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/git/branch/switch') {
+        const payload = await readJsonBody(req)
+        const body = asRecord(payload)
+        const cwd = typeof body?.cwd === 'string' ? body.cwd : ''
+        const branch = typeof body?.branch === 'string' ? body.branch : ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing body field: cwd' })
+          return
+        }
+
+        try {
+          await switchWorkspaceBranch(cwd, branch)
+          setJson(res, 200, { ok: true })
+        } catch (error) {
+          setJson(res, 400, { error: getErrorMessage(error, 'Failed to switch branch') })
+        }
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/git/branch/create-and-switch') {
+        const payload = await readJsonBody(req)
+        const body = asRecord(payload)
+        const cwd = typeof body?.cwd === 'string' ? body.cwd : ''
+        const branch = typeof body?.branch === 'string' ? body.branch : ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing body field: cwd' })
+          return
+        }
+
+        try {
+          await createAndSwitchWorkspaceBranch(cwd, branch)
+          setJson(res, 200, { ok: true })
+        } catch (error) {
+          setJson(res, 400, { error: getErrorMessage(error, 'Failed to create branch') })
+        }
+        return
       }
 
       if (req.method === 'GET' && url.pathname === '/codex-api/events') {

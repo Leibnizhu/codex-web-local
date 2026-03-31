@@ -133,16 +133,81 @@
         />
 
         <div v-if="activeThreadId" class="thread-composer-status-group">
-          <span
-            v-if="branchLabel"
-            class="thread-composer-status-chip thread-composer-branch-chip"
-            :title="branchLabel"
-            :aria-label="branchLabel"
+          <div
+            v-if="shouldShowBranchChip"
+            ref="branchMenuRef"
+            class="thread-composer-branch-wrap"
           >
-            <IconBranchPretty class="thread-composer-branch-icon" />
-            <span class="thread-composer-branch-text">{{ branchName }}</span>
-            <IconTablerChevronDown class="thread-composer-branch-chevron" />
-          </span>
+            <button
+              class="thread-composer-status-chip thread-composer-branch-chip thread-composer-branch-button"
+              type="button"
+              :title="branchLabel || tUi(normalizedLanguage, 'composer.branch')"
+              :aria-label="branchLabel || tUi(normalizedLanguage, 'composer.branch')"
+              :aria-expanded="isBranchMenuOpen"
+              aria-haspopup="menu"
+              @click="toggleBranchMenu"
+            >
+              <IconBranchPretty class="thread-composer-branch-icon" />
+              <span class="thread-composer-branch-text">{{ branchName || tUi(normalizedLanguage, 'composer.branch') }}</span>
+              <IconTablerChevronDown class="thread-composer-branch-chevron" />
+            </button>
+
+            <div
+              v-if="isBranchMenuOpen"
+              class="thread-composer-branch-menu"
+              role="menu"
+            >
+              <p class="thread-composer-branch-menu-title">{{ tUi(normalizedLanguage, 'composer.branchMenuTitle') }}</p>
+              <p v-if="branchBlockedSummary" class="thread-composer-branch-menu-hint">
+                {{ branchBlockedSummary }}
+              </p>
+              <p v-else class="thread-composer-branch-menu-hint">
+                {{ tUi(normalizedLanguage, 'composer.branchWorkspaceHint') }}
+              </p>
+
+              <p v-if="isBranchLoading" class="thread-composer-branch-menu-empty">
+                {{ tUi(normalizedLanguage, 'composer.branchLoading') }}
+              </p>
+              <div v-else-if="availableBranches.length > 0" class="thread-composer-branch-list">
+                <button
+                  v-for="branch in availableBranches"
+                  :key="branch"
+                  class="thread-composer-branch-list-item"
+                  type="button"
+                  :class="{ 'is-current': branch === currentBranchName }"
+                  :disabled="isBranchActionBlocked || isBranchSwitching || branch === currentBranchName"
+                  @click="onSelectBranch(branch)"
+                >
+                  <span class="thread-composer-branch-list-item-name">{{ branch }}</span>
+                  <span v-if="branch === currentBranchName" class="thread-composer-branch-list-item-badge">
+                    {{ tUi(normalizedLanguage, 'composer.branchCurrent') }}
+                  </span>
+                </button>
+              </div>
+              <p v-else class="thread-composer-branch-menu-empty">
+                {{ tUi(normalizedLanguage, 'composer.branchEmpty') }}
+              </p>
+
+              <div class="thread-composer-branch-menu-divider" />
+
+              <form class="thread-composer-branch-create" @submit.prevent="onCreateBranch">
+                <input
+                  v-model="newBranchName"
+                  class="thread-composer-branch-input"
+                  type="text"
+                  :disabled="isBranchActionBlocked || isBranchSwitching"
+                  :placeholder="tUi(normalizedLanguage, 'composer.branchCreatePlaceholder')"
+                />
+                <button
+                  class="thread-composer-branch-create-button"
+                  type="submit"
+                  :disabled="isBranchActionBlocked || isBranchSwitching || newBranchName.trim().length === 0"
+                >
+                  {{ isBranchSwitching ? tUi(normalizedLanguage, 'composer.branchSwitching') : tUi(normalizedLanguage, 'composer.branchCreate') }}
+                </button>
+              </form>
+            </div>
+          </div>
 
           <div class="thread-composer-quota-wrap">
             <span
@@ -235,7 +300,15 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
-import type { ChatMode, ComposerSubmitPayload, ReasoningEffort, UiRateLimitUsage, UiThreadContextUsage } from '../../types/codex'
+import type {
+  ChatMode,
+  ComposerSubmitPayload,
+  ReasoningEffort,
+  UiRateLimitUsage,
+  UiThreadContextUsage,
+  UiWorkspaceBranchState,
+  WorkspaceBranchBlockReason,
+} from '../../types/codex'
 import { tUi, type UiLanguage } from '../../i18n/uiText'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBrain from '../icons/IconTablerBrain.vue'
@@ -257,6 +330,7 @@ const props = defineProps<{
   selectedReasoningEffort: ReasoningEffort | ''
   selectedChatMode: ChatMode
   threadBranch?: string
+  workspaceBranchState?: UiWorkspaceBranchState | null
   contextUsage?: UiThreadContextUsage | null
   rateLimitUsage?: UiRateLimitUsage | null
   isCompactingContext?: boolean
@@ -279,6 +353,9 @@ const emit = defineEmits<{
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
   'update:selected-chat-mode': [mode: ChatMode]
+  'refresh-branches': []
+  'switch-branch': [branch: string]
+  'create-branch': [branch: string]
 }>()
 
 const draft = ref('')
@@ -286,7 +363,10 @@ const isComposing = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const actionsMenuRef = ref<HTMLElement | null>(null)
+const branchMenuRef = ref<HTMLElement | null>(null)
 const isActionsMenuOpen = ref(false)
+const isBranchMenuOpen = ref(false)
+const newBranchName = ref('')
 const pastedImages = ref<ComposerImageInput[]>([])
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
 const REASONING_EFFORT_ORDER: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
@@ -341,12 +421,43 @@ const modelOptions = computed(() =>
 const reasoningLabel = computed(() =>
   tUi(normalizedLanguage.value, 'composer.reasoningEffort'),
 )
+const currentBranchName = computed(() => {
+  const workspaceBranch = props.workspaceBranchState?.currentBranch?.trim() ?? ''
+  if (workspaceBranch) return workspaceBranch
+  return props.threadBranch?.trim() ?? ''
+})
 const branchLabel = computed(() => {
-  const branch = props.threadBranch?.trim() ?? ''
+  const branch = currentBranchName.value
   if (!branch) return ''
   return `${tUi(normalizedLanguage.value, 'composer.branch')} ${branch}`
 })
-const branchName = computed(() => props.threadBranch?.trim() ?? '')
+const branchName = computed(() => currentBranchName.value)
+const shouldShowBranchChip = computed(() => {
+  if (!props.activeThreadId) return false
+  return branchName.value.length > 0 || props.workspaceBranchState != null
+})
+const isBranchLoading = computed(() => props.workspaceBranchState?.isLoading === true)
+const isBranchSwitching = computed(() => props.workspaceBranchState?.isSwitching === true)
+const branchBlockedReasons = computed<WorkspaceBranchBlockReason[]>(() => props.workspaceBranchState?.blockedReasons ?? [])
+const isBranchActionBlocked = computed(() =>
+  props.disabled === true || branchBlockedReasons.value.length > 0,
+)
+const availableBranches = computed(() => {
+  const branches = props.workspaceBranchState?.branches ?? []
+  const current = currentBranchName.value
+  const normalized = branches.map((branch) => branch.trim()).filter((branch) => branch.length > 0)
+  if (current && !normalized.includes(current)) {
+    normalized.unshift(current)
+  }
+  return Array.from(new Set(normalized))
+})
+function getBranchBlockedReasonLabel(reason: WorkspaceBranchBlockReason): string {
+  if (reason === 'not_repo') return tUi(normalizedLanguage.value, 'composer.branchBlockedNotRepo')
+  if (reason === 'workspace_dirty') return tUi(normalizedLanguage.value, 'composer.branchBlockedDirty')
+  if (reason === 'thread_in_progress') return tUi(normalizedLanguage.value, 'composer.branchBlockedInProgress')
+  return tUi(normalizedLanguage.value, 'composer.branchBlockedQueued')
+}
+const branchBlockedSummary = computed(() => branchBlockedReasons.value.map(getBranchBlockedReasonLabel).join(' · '))
 function formatCompactWindowDuration(minutes: number | null): string {
   if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
     return ''
@@ -596,6 +707,19 @@ function closeActionsMenu(): void {
   isActionsMenuOpen.value = false
 }
 
+function toggleBranchMenu(): void {
+  if (!props.activeThreadId) return
+  const nextOpen = !isBranchMenuOpen.value
+  isBranchMenuOpen.value = nextOpen
+  if (nextOpen) {
+    emit('refresh-branches')
+  }
+}
+
+function closeBranchMenu(): void {
+  isBranchMenuOpen.value = false
+}
+
 function onSelectUploadFiles(): void {
   closeActionsMenu()
   fileInputRef.value?.click()
@@ -627,13 +751,16 @@ async function appendSelectedFiles(files: File[]): Promise<void> {
 }
 
 function onDocumentPointerDown(event: PointerEvent): void {
-  if (!isActionsMenuOpen.value) return
-  const root = actionsMenuRef.value
-  if (!root) return
   const target = event.target
   if (!(target instanceof Node)) return
-  if (root.contains(target)) return
-  closeActionsMenu()
+  const actionsRoot = actionsMenuRef.value
+  if (isActionsMenuOpen.value && actionsRoot && !actionsRoot.contains(target)) {
+    closeActionsMenu()
+  }
+  const branchRoot = branchMenuRef.value
+  if (isBranchMenuOpen.value && branchRoot && !branchRoot.contains(target)) {
+    closeBranchMenu()
+  }
 }
 
 onMounted(() => {
@@ -666,12 +793,28 @@ function onChatModeSelect(mode: ChatMode): void {
   emit('update:selected-chat-mode', mode)
 }
 
+function onSelectBranch(branch: string): void {
+  if (isBranchActionBlocked.value || isBranchSwitching.value) return
+  emit('switch-branch', branch)
+  closeBranchMenu()
+}
+
+function onCreateBranch(): void {
+  const branch = newBranchName.value.trim()
+  if (!branch || isBranchActionBlocked.value || isBranchSwitching.value) return
+  emit('create-branch', branch)
+  newBranchName.value = ''
+  closeBranchMenu()
+}
+
 watch(
   () => props.activeThreadId,
   () => {
     draft.value = ''
     pastedImages.value = []
     closeActionsMenu()
+    closeBranchMenu()
+    newBranchName.value = ''
   },
 )
 </script>
@@ -844,6 +987,66 @@ watch(
 
 .thread-composer-branch-chip {
   @apply gap-1.5 rounded-full border-zinc-200 bg-zinc-100 px-2.5 text-zinc-600;
+}
+
+.thread-composer-branch-wrap {
+  @apply relative;
+}
+
+.thread-composer-branch-button {
+  @apply transition hover:bg-zinc-200;
+}
+
+.thread-composer-branch-menu {
+  @apply absolute bottom-[calc(100%+8px)] right-0 z-30 w-64 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg;
+}
+
+.thread-composer-branch-menu-title {
+  @apply m-0 text-[11px] font-semibold text-zinc-800;
+}
+
+.thread-composer-branch-menu-hint {
+  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+}
+
+.thread-composer-branch-menu-empty {
+  @apply mt-2 mb-0 text-[11px] text-zinc-500;
+}
+
+.thread-composer-branch-list {
+  @apply mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto;
+}
+
+.thread-composer-branch-list-item {
+  @apply flex w-full items-center justify-between gap-2 rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-left text-[11px] text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400;
+}
+
+.thread-composer-branch-list-item.is-current {
+  @apply bg-zinc-100 text-zinc-800;
+}
+
+.thread-composer-branch-list-item-name {
+  @apply truncate;
+}
+
+.thread-composer-branch-list-item-badge {
+  @apply shrink-0 rounded-full bg-zinc-200 px-1.5 py-0.5 text-[9px] font-medium text-zinc-700;
+}
+
+.thread-composer-branch-menu-divider {
+  @apply my-2 h-px bg-zinc-200;
+}
+
+.thread-composer-branch-create {
+  @apply flex items-center gap-2;
+}
+
+.thread-composer-branch-input {
+  @apply min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400;
+}
+
+.thread-composer-branch-create-button {
+  @apply shrink-0 rounded-lg border border-zinc-200 bg-zinc-100 px-2 py-1.5 text-[11px] font-medium text-zinc-700 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50;
 }
 
 .thread-composer-branch-icon {

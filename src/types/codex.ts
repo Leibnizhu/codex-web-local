@@ -157,6 +157,37 @@ export type UiTurnFileChanges = {
   totalDeletions: number
 }
 
+export type WorkspaceBranchBlockReason =
+  | 'not_repo'
+  | 'workspace_dirty'
+  | 'thread_in_progress'
+  | 'queued_messages'
+
+export type UiWorkspaceGitStatus = {
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+}
+
+export type UiWorkspaceBranchList = {
+  cwd: string
+  isRepo: boolean
+  currentBranch: string
+  branches: string[]
+}
+
+export type UiWorkspaceBranchState = {
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+  branches: string[]
+  isLoading: boolean
+  isSwitching: boolean
+  blockedReasons: WorkspaceBranchBlockReason[]
+}
+
 export type ThreadScrollState = {
   scrollTop: number
   isAtBottom: boolean

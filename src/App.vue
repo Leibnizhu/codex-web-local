@@ -126,7 +126,8 @@
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
                 :is-turn-in-progress="false"
-                :thread-branch="selectedThread?.branch ?? ''"
+                :thread-branch="selectedWorkspaceBranchState?.currentBranch || selectedThread?.branch || ''"
+                :workspace-branch-state="selectedWorkspaceBranchState"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -136,6 +137,9 @@
                 @update:selected-model="onSelectModel"
                 @update:selected-reasoning-effort="onSelectReasoningEffort"
                 @update:selected-chat-mode="setSelectedChatMode"
+                @refresh-branches="onRefreshWorkspaceBranches"
+                @switch-branch="onSwitchWorkspaceBranch"
+                @create-branch="onCreateWorkspaceBranch"
                 @compact-context="onCompactContext" />
             </div>
           </template>
@@ -200,7 +204,8 @@
                 :selected-model="selectedModelId"
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
-                :thread-branch="selectedThread?.branch ?? ''"
+                :thread-branch="selectedWorkspaceBranchState?.currentBranch || selectedThread?.branch || ''"
+                :workspace-branch-state="selectedWorkspaceBranchState"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -210,6 +215,9 @@
                 @update:selected-model="onSelectModel"
                 @update:selected-reasoning-effort="onSelectReasoningEffort"
                 @update:selected-chat-mode="setSelectedChatMode"
+                @refresh-branches="onRefreshWorkspaceBranches"
+                @switch-branch="onSwitchWorkspaceBranch"
+                @create-branch="onCreateWorkspaceBranch"
                 @interrupt="onInterruptTurn"
                 @compact-context="onCompactContext" />
               </div>
@@ -258,6 +266,7 @@ const {
   selectedThreadServerRequests,
   selectedThreadFileChanges,
   selectedQueuedMessages,
+  selectedWorkspaceBranchState,
   selectedThreadContextUsage,
   selectedThreadRateLimitUsage,
   isCompactingSelectedThreadContext,
@@ -284,6 +293,9 @@ const {
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
   compactSelectedThreadContext,
+  refreshSelectedWorkspaceBranchState,
+  switchSelectedWorkspaceBranch,
+  createAndSwitchSelectedWorkspaceBranch,
   setSelectedModelId,
   setSelectedReasoningEffort,
   setSelectedChatMode,
@@ -586,6 +598,24 @@ function onInterruptTurn(): void {
 
 function onCompactContext(): void {
   void compactSelectedThreadContext()
+}
+
+function onRefreshWorkspaceBranches(): void {
+  void refreshSelectedWorkspaceBranchState({ includeBranches: true, silent: false })
+}
+
+async function onSwitchWorkspaceBranch(branch: string): Promise<void> {
+  const didSwitch = await switchSelectedWorkspaceBranch(branch)
+  if (!didSwitch) return
+  previewPanel.value = null
+  await refreshWorkspaceDiffTotals()
+}
+
+async function onCreateWorkspaceBranch(branch: string): Promise<void> {
+  const didCreate = await createAndSwitchSelectedWorkspaceBranch(branch)
+  if (!didCreate) return
+  previewPanel.value = null
+  await refreshWorkspaceDiffTotals()
 }
 
 function formatQueuedAtTime(value: string): string {

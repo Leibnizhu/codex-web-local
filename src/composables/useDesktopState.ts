@@ -2,6 +2,9 @@ import { computed, ref } from 'vue'
 import {
   archiveThread,
   compactThreadContext,
+  createAndSwitchWorkspaceBranch,
+  fetchWorkspaceBranches,
+  fetchWorkspaceGitStatus,
   getAvailableModelIds,
   getAccountRateLimitSnapshot,
   getCurrentModelConfig,
@@ -13,6 +16,7 @@ import {
   getThreadGroups,
   renameThread,
   resumeThread,
+  switchWorkspaceBranch,
   startThread,
   subscribeCodexNotifications,
   startThreadTurn,
@@ -33,6 +37,8 @@ import type {
   UiServerRequestReply,
   UiThread,
   UiTurnFileChanges,
+  UiWorkspaceBranchState,
+  WorkspaceBranchBlockReason,
 } from '../types/codex'
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 import {
@@ -223,6 +229,7 @@ export function useDesktopState() {
   const contextUsageByThreadId = ref<Record<string, UiThreadContextUsage>>(loadThreadContextUsageMap())
   const rateLimitUsage = ref<UiRateLimitUsage | null>(loadRateLimitUsage())
   const compactingContextByThreadId = ref<Record<string, boolean>>({})
+  const workspaceBranchStateByCwd = ref<Record<string, UiWorkspaceBranchState>>({})
 
   const isLoadingThreads = ref(false)
   const isLoadingMessages = ref(false)
@@ -278,6 +285,22 @@ export function useDesktopState() {
     const threadId = selectedThreadId.value
     if (!threadId) return []
     return queuedMessagesByThreadId.value[threadId] ?? []
+  })
+  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return null
+
+    const current = workspaceBranchStateByCwd.value[cwd]
+    if (!current) {
+      return {
+        ...createWorkspaceBranchState(cwd),
+        isLoading: true,
+      }
+    }
+    return {
+      ...current,
+      blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, current),
+    }
   })
   const isCompactingSelectedThreadContext = computed<boolean>(() => {
     const threadId = selectedThreadId.value
@@ -404,6 +427,169 @@ export function useDesktopState() {
     selectedChatMode.value = mode
   }
 
+  function createWorkspaceBranchState(cwd: string): UiWorkspaceBranchState {
+    return {
+      cwd,
+      isRepo: false,
+      isDirty: false,
+      currentBranch: '',
+      branches: [],
+      isLoading: false,
+      isSwitching: false,
+      blockedReasons: [],
+    }
+  }
+
+  function upsertWorkspaceBranchState(cwd: string, updater: (current: UiWorkspaceBranchState) => UiWorkspaceBranchState): void {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return
+    const current = workspaceBranchStateByCwd.value[normalizedCwd] ?? createWorkspaceBranchState(normalizedCwd)
+    workspaceBranchStateByCwd.value = {
+      ...workspaceBranchStateByCwd.value,
+      [normalizedCwd]: updater(current),
+    }
+  }
+
+  function hasInProgressThreadsInWorkspace(cwd: string): boolean {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return false
+    return allThreads.value.some((thread) =>
+      thread.cwd.trim() === normalizedCwd && inProgressById.value[thread.id] === true,
+    )
+  }
+
+  function hasQueuedMessagesInWorkspace(cwd: string): boolean {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return false
+    return allThreads.value.some((thread) => {
+      if (thread.cwd.trim() !== normalizedCwd) return false
+      const queued = queuedMessagesByThreadId.value[thread.id] ?? []
+      return queued.length > 0
+    })
+  }
+
+  function computeWorkspaceBranchBlockedReasons(
+    cwd: string,
+    state: Pick<UiWorkspaceBranchState, 'isRepo' | 'isDirty'>,
+  ): WorkspaceBranchBlockReason[] {
+    const reasons: WorkspaceBranchBlockReason[] = []
+    if (!state.isRepo) reasons.push('not_repo')
+    if (state.isDirty) reasons.push('workspace_dirty')
+    if (hasInProgressThreadsInWorkspace(cwd)) reasons.push('thread_in_progress')
+    if (hasQueuedMessagesInWorkspace(cwd)) reasons.push('queued_messages')
+    return reasons
+  }
+
+  async function refreshWorkspaceBranchState(
+    cwd: string,
+    options: { includeBranches?: boolean; silent?: boolean } = {},
+  ): Promise<UiWorkspaceBranchState | null> {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return null
+
+    const includeBranches = options.includeBranches ?? true
+    const silent = options.silent ?? false
+    upsertWorkspaceBranchState(normalizedCwd, (current) => ({
+      ...current,
+      isLoading: true,
+    }))
+
+    try {
+      const [status, branchList] = await Promise.all([
+        fetchWorkspaceGitStatus(normalizedCwd),
+        includeBranches ? fetchWorkspaceBranches(normalizedCwd) : Promise.resolve(null),
+      ])
+
+      const nextState: UiWorkspaceBranchState = {
+        cwd: normalizedCwd,
+        isRepo: status?.isRepo === true,
+        isDirty: status?.isDirty === true,
+        currentBranch: status?.currentBranch ?? branchList?.currentBranch ?? '',
+        branches: branchList?.branches ?? (workspaceBranchStateByCwd.value[normalizedCwd]?.branches ?? []),
+        isLoading: false,
+        isSwitching: workspaceBranchStateByCwd.value[normalizedCwd]?.isSwitching === true,
+        blockedReasons: [],
+      }
+      nextState.blockedReasons = computeWorkspaceBranchBlockedReasons(normalizedCwd, nextState)
+      upsertWorkspaceBranchState(normalizedCwd, () => nextState)
+      return nextState
+    } catch (unknownError) {
+      upsertWorkspaceBranchState(normalizedCwd, (current) => ({
+        ...current,
+        isLoading: false,
+      }))
+      if (!silent) {
+        error.value = unknownError instanceof Error ? unknownError.message : 'Failed to load workspace branches'
+      }
+      return null
+    }
+  }
+
+  async function refreshSelectedWorkspaceBranchState(
+    options: { includeBranches?: boolean; silent?: boolean } = {},
+  ): Promise<UiWorkspaceBranchState | null> {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return null
+    return refreshWorkspaceBranchState(cwd, options)
+  }
+
+  async function runSelectedWorkspaceBranchAction(
+    action: (cwd: string) => Promise<void>,
+    fallbackMessage: string,
+  ): Promise<boolean> {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return false
+
+    const currentState = await refreshSelectedWorkspaceBranchState({ includeBranches: true, silent: true })
+    if (!currentState) return false
+    if (currentState.blockedReasons.length > 0) {
+      error.value = fallbackMessage
+      return false
+    }
+
+    upsertWorkspaceBranchState(cwd, (current) => ({
+      ...current,
+      isSwitching: true,
+    }))
+
+    try {
+      await action(cwd)
+      await loadThreads()
+      if (selectedThreadId.value) {
+        await loadMessages(selectedThreadId.value, { silent: true })
+      }
+      await refreshWorkspaceBranchState(cwd, { includeBranches: true, silent: true })
+      return true
+    } catch (unknownError) {
+      error.value = unknownError instanceof Error ? unknownError.message : fallbackMessage
+      return false
+    } finally {
+      upsertWorkspaceBranchState(cwd, (current) => ({
+        ...current,
+        isSwitching: false,
+        blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, current),
+      }))
+    }
+  }
+
+  async function switchSelectedWorkspaceBranch(targetBranch: string): Promise<boolean> {
+    const normalizedBranch = targetBranch.trim()
+    if (!normalizedBranch) return false
+    return runSelectedWorkspaceBranchAction(
+      (cwd) => switchWorkspaceBranch(cwd, normalizedBranch),
+      '当前工作区暂时不能切换分支',
+    )
+  }
+
+  async function createAndSwitchSelectedWorkspaceBranch(targetBranch: string): Promise<boolean> {
+    const normalizedBranch = targetBranch.trim()
+    if (!normalizedBranch) return false
+    return runSelectedWorkspaceBranchAction(
+      (cwd) => createAndSwitchWorkspaceBranch(cwd, normalizedBranch),
+      '当前工作区暂时不能创建分支',
+    )
+  }
+  
   function buildPendingTurnDetails(): string[] {
     return []
   }
@@ -1118,6 +1304,7 @@ export function useDesktopState() {
         refreshRateLimitUsage({ force: true }),
       ])
       await loadMessages(selectedThreadId.value)
+      await refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     }
@@ -1129,6 +1316,8 @@ export function useDesktopState() {
     selectThreadLoadAbortController = threadId ? new AbortController() : null
     setSelectedThreadId(threadId)
     if (!threadId) return
+
+    void refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
 
     void loadMessages(threadId, {
       signal: selectThreadLoadAbortController?.signal,
@@ -1615,6 +1804,7 @@ export function useDesktopState() {
     selectedThreadServerRequests,
     selectedThreadFileChanges,
     selectedQueuedMessages,
+    selectedWorkspaceBranchState,
     selectedThreadContextUsage,
     selectedThreadRateLimitUsage,
     isCompactingSelectedThreadContext,
@@ -1641,6 +1831,9 @@ export function useDesktopState() {
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
     compactSelectedThreadContext,
+    refreshSelectedWorkspaceBranchState,
+    switchSelectedWorkspaceBranch,
+    createAndSwitchSelectedWorkspaceBranch,
     setSelectedModelId,
     setSelectedReasoningEffort,
     setSelectedChatMode,
