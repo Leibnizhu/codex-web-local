@@ -171,3 +171,31 @@
 - 增加对 detached HEAD、merge/rebase 中间态的更明确提示。
 - 评估是否需要把待处理审批请求也纳入阻塞条件。
 - 如需对齐 Codex app 设计，后续应规划 worktree-aware 的工作区模型。
+
+## 增量增强：审批请求阻塞分支切换
+
+### 目标
+
+- 当同一 `cwd` 下仍存在待处理审批请求时，禁止切换或创建并切换分支。
+
+### 影响文件
+
+- Modify: `src/types/codex.ts`
+- Modify: `src/composables/useDesktopState.ts`
+- Modify: `src/components/content/ThreadComposer.vue`
+- Modify: `src/i18n/uiText.ts`
+
+### 实施步骤
+
+1. 在工作区分支阻塞原因中新增 `pending_server_requests`。
+2. 在状态层按“同一 `cwd` 下任一线程仍有待处理审批请求”加入阻塞判断。
+3. 在分支菜单中新增对应的阻塞提示文案。
+4. 运行 `npm run build` 验证。
+
+### 增强结果
+
+- 已新增 `pending_server_requests` 阻塞原因。
+- 已在状态层按同一 `cwd` 聚合待处理审批请求，并阻塞分支切换 / 创建并切换。
+- 已修正刷新页面后的漏拦截问题：全局作用域 `__global__` 下的待处理审批请求现在也会阻塞分支切换。
+- 已在分支菜单中补充“有待处理的审批请求”提示文案。
+- 2026-03-31：执行 `npm run build` 通过。
