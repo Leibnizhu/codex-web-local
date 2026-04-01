@@ -80,18 +80,6 @@ const UI_TEXT = {
     zh: ({ time }) => `排队于 ${String(time)}`,
     en: ({ time }) => `Queued at ${String(time)}`,
   },
-  'app.workspaceDirtyHiddenTitle': {
-    zh: '工作区仍有未直接显示在 diff 中的 Git 状态',
-    en: 'The workspace still has Git states that are not shown in the diff',
-  },
-  'app.workspaceDirtyHiddenHint': {
-    zh: '这些状态同样会阻塞分支切换，例如未跟踪文件、冲突或重命名。',
-    en: 'These states also block branch switching, such as untracked files, conflicts, or renames.',
-  },
-  'app.workspaceDirtyHiddenMore': {
-    zh: ({ count }) => `另有 ${String(count)} 项`,
-    en: ({ count }) => `${String(count)} more`,
-  },
   'composer.model': {
     zh: '模型',
     en: 'Model',
