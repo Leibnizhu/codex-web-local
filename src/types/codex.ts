@@ -191,6 +191,16 @@ export type UiWorkspaceDiffSnapshot = {
   totalDeletions: number
 }
 
+export type WorkspaceBranchState = {
+  isRepo: boolean
+  currentBranch: string
+  branches: string[]
+  baseBranch: string | null
+  isDetachedHead: boolean
+  isLoading: boolean
+  isSwitching: boolean
+}
+
 export type WorkspaceBranchBlockReason =
   | 'not_repo'
   | 'workspace_dirty'
@@ -253,6 +263,46 @@ export type UiWorkspaceBranchState = {
   isLoading: boolean
   isSwitching: boolean
   blockedReasons: WorkspaceBranchBlockReason[]
+}
+
+export type WorkspaceGuardState = {
+  blockedReasons: WorkspaceBranchBlockReason[]
+  livePendingRequestCount: number
+  persistedPendingRequestCount: number
+  queuedMessageCount: number
+  inProgressThreadCount: number
+}
+
+export type WorkspaceDiffState = {
+  selectedMode: UiWorkspaceDiffMode
+  snapshots: Partial<Record<UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot>>
+  isLoadingByMode: Partial<Record<UiWorkspaceDiffMode, boolean>>
+  totalAdditions: number
+  totalDeletions: number
+}
+
+export type WorkspaceApprovalState = {
+  live: UiServerRequest[]
+  persisted: UiPersistedServerRequest[]
+}
+
+export type WorkspaceModel = {
+  cwd: string
+  branch: WorkspaceBranchState
+  guard: WorkspaceGuardState
+  gitStatus: {
+    isDirty: boolean
+    summary: UiWorkspaceDirtySummary | null
+    entries: UiWorkspaceDirtyEntry[]
+    fetchedAt: string | null
+  }
+  diff: WorkspaceDiffState
+  approvals: WorkspaceApprovalState
+  ui: {
+    selectedPath: string | null
+    expandedPaths: string[]
+    lastOpenedAt: string | null
+  }
 }
 
 export type ThreadScrollState = {

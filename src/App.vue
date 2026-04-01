@@ -285,7 +285,7 @@ import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
 import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot } from './types/codex'
-import { fetchFilePreview, fetchWorkspaceChanges, fetchWorkspaceDiffSnapshot } from './api/codexGateway'
+import { fetchFilePreview } from './api/codexGateway'
 import {
   normalizePathSeparators,
   getBasename,
@@ -304,6 +304,8 @@ const {
   selectedThreadScrollState,
   selectedThreadServerRequests,
   selectedWorkspacePersistedServerRequests,
+  selectedWorkspaceModel,
+  selectedWorkspaceDiffTotals,
   selectedThreadFileChanges,
   selectedQueuedMessages,
   selectedWorkspaceBranchState,
@@ -334,6 +336,10 @@ const {
   interruptSelectedThreadTurn,
   compactSelectedThreadContext,
   refreshSelectedWorkspaceBranchState,
+  refreshSelectedWorkspaceDiffTotals,
+  fetchWorkspaceDiffSnapshotForMode,
+  openPreferredWorkspaceDiffSnapshot,
+  setWorkspaceDiffMode,
   switchSelectedWorkspaceBranch,
   createAndSwitchSelectedWorkspaceBranch,
   setSelectedModelId,
@@ -364,9 +370,8 @@ const sidebarSearchQuery = ref('')
 const isSidebarSearchVisible = ref(false)
 const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
 const previewPanel = ref<PreviewPanelState | null>(null)
-const workspaceDiffTotals = ref({ additions: 0, deletions: 0 })
 const isCreatingThreadFromHome = ref(false)
-const currentWorkspaceDiffMode = ref<UiWorkspaceDiffMode>('unstaged')
+const workspaceDiffTotals = computed(() => selectedWorkspaceDiffTotals.value)
 
 const routeThreadId = computed(() => {
   const rawThreadId = route.params.threadId
@@ -696,14 +701,14 @@ async function onSwitchWorkspaceBranch(branch: string): Promise<void> {
   const didSwitch = await switchSelectedWorkspaceBranch(branch)
   if (!didSwitch) return
   previewPanel.value = null
-  await refreshWorkspaceDiffTotals()
+  await refreshSelectedWorkspaceDiffTotals()
 }
 
 async function onCreateWorkspaceBranch(branch: string): Promise<void> {
   const didCreate = await createAndSwitchSelectedWorkspaceBranch(branch)
   if (!didCreate) return
   previewPanel.value = null
-  await refreshWorkspaceDiffTotals()
+  await refreshSelectedWorkspaceDiffTotals()
 }
 
 function formatQueuedAtTime(value: string): string {
@@ -786,54 +791,30 @@ async function onOpenWorkspaceDiff(): Promise<void> {
 
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   if (!cwd) return
-  const preferredMode = currentWorkspaceDiffMode.value
-  if (preferredMode !== 'unstaged') {
+  const preferredMode = selectedWorkspaceModel.value?.diff.selectedMode ?? ''
+  if (preferredMode && preferredMode !== 'unstaged') {
     await openWorkspaceDiffPanel(cwd, preferredMode)
     return
   }
 
-  const unstagedSnapshot = await fetchWorkspaceDiffSnapshot(cwd, 'unstaged')
-  if ((unstagedSnapshot?.files.length ?? 0) > 0 || (unstagedSnapshot?.warning ?? null)) {
-    await openWorkspaceDiffPanel(cwd, 'unstaged')
-    return
+  const snapshot = await openPreferredWorkspaceDiffSnapshot(cwd)
+  if (!snapshot) return
+  previewPanel.value = {
+    kind: 'workspace',
+    cwd,
+    snapshot,
+    expandedPaths: buildExpandedPaths(snapshot),
   }
-
-  const stagedSnapshot = await fetchWorkspaceDiffSnapshot(cwd, 'staged')
-  if ((stagedSnapshot?.files.length ?? 0) > 0) {
-    await openWorkspaceDiffPanel(cwd, 'staged')
-    return
-  }
-
-  await openWorkspaceDiffPanel(cwd, 'unstaged')
 }
 
 async function openWorkspaceDiffPanel(cwd: string, mode: UiWorkspaceDiffMode): Promise<void> {
-  try {
-    const snapshot = await fetchWorkspaceDiffSnapshot(cwd, mode)
-    const normalizedSnapshot: UiWorkspaceDiffSnapshot = snapshot ?? {
-      mode,
-      cwd,
-      label: '',
-      baseRef: null,
-      targetRef: null,
-      warning: null,
-      files: [],
-      totalAdditions: 0,
-      totalDeletions: 0,
-    }
-    const expandedPaths: Record<string, boolean> = {}
-    if (normalizedSnapshot.files.length > 0) {
-      expandedPaths[normalizedSnapshot.files[0].path] = true
-    }
-    currentWorkspaceDiffMode.value = normalizedSnapshot.mode
-    previewPanel.value = {
-      kind: 'workspace',
-      cwd,
-      snapshot: normalizedSnapshot,
-      expandedPaths,
-    }
-  } catch {
-    previewPanel.value = null
+  const snapshot = await fetchWorkspaceDiffSnapshotForMode(cwd, mode)
+  setWorkspaceDiffMode(cwd, snapshot.mode)
+  previewPanel.value = {
+    kind: 'workspace',
+    cwd,
+    snapshot,
+    expandedPaths: buildExpandedPaths(snapshot),
   }
 }
 
@@ -843,27 +824,12 @@ async function onChangeWorkspaceDiffMode(mode: UiWorkspaceDiffMode): Promise<voi
   await openWorkspaceDiffPanel(cwd, mode)
 }
 
-
-
-async function refreshWorkspaceDiffTotals(): Promise<void> {
-  const cwd = selectedThread.value?.cwd?.trim() ?? ''
-  if (!cwd) {
-    workspaceDiffTotals.value = { additions: 0, deletions: 0 }
-    return
+function buildExpandedPaths(snapshot: UiWorkspaceDiffSnapshot): Record<string, boolean> {
+  const expandedPaths: Record<string, boolean> = {}
+  if (snapshot.files.length > 0) {
+    expandedPaths[snapshot.files[0].path] = true
   }
-  try {
-    const changes = await fetchWorkspaceChanges(cwd)
-    if (!changes) {
-      workspaceDiffTotals.value = { additions: 0, deletions: 0 }
-      return
-    }
-    workspaceDiffTotals.value = {
-      additions: changes.totalAdditions,
-      deletions: changes.totalDeletions,
-    }
-  } catch {
-    workspaceDiffTotals.value = { additions: 0, deletions: 0 }
-  }
+  return expandedPaths
 }
 
 function loadSidebarCollapsed(): boolean {
@@ -936,7 +902,7 @@ async function initialize(): Promise<void> {
   await refreshAll()
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
-  await refreshWorkspaceDiffTotals()
+  await refreshSelectedWorkspaceDiffTotals()
   startPolling()
 }
 
@@ -1009,7 +975,7 @@ watch(
   () => selectedThreadId.value,
   () => {
     previewPanel.value = null
-    void refreshWorkspaceDiffTotals()
+    void refreshSelectedWorkspaceDiffTotals()
   },
 )
 
@@ -1041,7 +1007,7 @@ watch(
 watch(
   () => selectedThreadFileChanges.value?.turnId ?? '',
   () => {
-    void refreshWorkspaceDiffTotals()
+    void refreshSelectedWorkspaceDiffTotals()
   },
 )
 

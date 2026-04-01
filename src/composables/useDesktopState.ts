@@ -4,7 +4,9 @@ import {
   compactThreadContext,
   createAndSwitchWorkspaceBranch,
   dismissPersistedServerRequests as dismissPersistedServerRequestsRequest,
+  fetchWorkspaceChanges,
   fetchWorkspaceBranches,
+  fetchWorkspaceDiffSnapshot,
   fetchWorkspaceGitStatus,
   getAvailableModelIds,
   getAccountRateLimitSnapshot,
@@ -41,7 +43,10 @@ import type {
   UiThread,
   UiTurnFileChanges,
   UiWorkspaceBranchState,
+  UiWorkspaceDiffMode,
+  UiWorkspaceDiffSnapshot,
   WorkspaceBranchBlockReason,
+  WorkspaceModel,
 } from '../types/codex'
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 import {
@@ -160,6 +165,10 @@ const EMPTY_WORKSPACE_DIRTY_SUMMARY = {
   renamed: 0,
   deleted: 0,
 }
+const EMPTY_WORKSPACE_DIFF_TOTALS = {
+  additions: 0,
+  deletions: 0,
+}
 const THREAD_LIST_REFRESH_METHODS = new Set([
   'thread/started',
   'thread/name/updated',
@@ -242,6 +251,7 @@ export function useDesktopState() {
   const rateLimitUsage = ref<UiRateLimitUsage | null>(loadRateLimitUsage())
   const compactingContextByThreadId = ref<Record<string, boolean>>({})
   const workspaceBranchStateByCwd = ref<Record<string, UiWorkspaceBranchState>>({})
+  const workspaceByCwd = ref<Record<string, WorkspaceModel>>({})
 
   const isLoadingThreads = ref(false)
   const isLoadingMessages = ref(false)
@@ -293,9 +303,7 @@ export function useDesktopState() {
     return rows.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   })
   const selectedWorkspacePersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
-    const cwd = selectedThread.value?.cwd?.trim() ?? ''
-    if (!cwd) return []
-    return listPersistedServerRequestsForWorkspace(cwd)
+    return selectedWorkspaceModel.value?.approvals.persisted ?? []
   })
   const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
     const threadId = selectedThreadId.value
@@ -313,22 +321,28 @@ export function useDesktopState() {
     if (!threadId) return []
     return queuedMessagesByThreadId.value[threadId] ?? []
   })
-  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
+  const selectedWorkspaceModel = computed<WorkspaceModel | null>(() => {
     const cwd = selectedThread.value?.cwd?.trim() ?? ''
     if (!cwd) return null
-
-    const current = workspaceBranchStateByCwd.value[cwd]
-    if (!current) {
-      return {
-        ...createWorkspaceBranchState(cwd),
-        isLoading: true,
-      }
-    }
+    const current = workspaceByCwd.value[cwd]
+    if (current) return current
     return {
-      ...current,
-      blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, current),
+      ...createWorkspaceModel(cwd),
+      branch: {
+        ...createWorkspaceModel(cwd).branch,
+        isLoading: true,
+      },
     }
   })
+  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
+    const workspace = selectedWorkspaceModel.value
+    if (!workspace) return null
+    return workspaceBranchStateFromModel(workspace)
+  })
+  const selectedWorkspaceDiffTotals = computed(() => ({
+    additions: selectedWorkspaceModel.value?.diff.totalAdditions ?? 0,
+    deletions: selectedWorkspaceModel.value?.diff.totalDeletions ?? 0,
+  }))
   const isCompactingSelectedThreadContext = computed<boolean>(() => {
     const threadId = selectedThreadId.value
     if (!threadId) return false
@@ -469,6 +483,75 @@ export function useDesktopState() {
     }
   }
 
+  function createWorkspaceModel(cwd: string): WorkspaceModel {
+    return {
+      cwd,
+      branch: {
+        isRepo: false,
+        currentBranch: '',
+        branches: [],
+        baseBranch: null,
+        isDetachedHead: false,
+        isLoading: false,
+        isSwitching: false,
+      },
+      guard: {
+        blockedReasons: [],
+        livePendingRequestCount: 0,
+        persistedPendingRequestCount: 0,
+        queuedMessageCount: 0,
+        inProgressThreadCount: 0,
+      },
+      gitStatus: {
+        isDirty: false,
+        summary: { ...EMPTY_WORKSPACE_DIRTY_SUMMARY },
+        entries: [],
+        fetchedAt: null,
+      },
+      diff: {
+        selectedMode: 'unstaged',
+        snapshots: {},
+        isLoadingByMode: {},
+        totalAdditions: EMPTY_WORKSPACE_DIFF_TOTALS.additions,
+        totalDeletions: EMPTY_WORKSPACE_DIFF_TOTALS.deletions,
+      },
+      approvals: {
+        live: [],
+        persisted: [],
+      },
+      ui: {
+        selectedPath: null,
+        expandedPaths: [],
+        lastOpenedAt: null,
+      },
+    }
+  }
+
+  function upsertWorkspaceModel(cwd: string, updater: (current: WorkspaceModel) => WorkspaceModel): void {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return
+    const current = workspaceByCwd.value[normalizedCwd] ?? createWorkspaceModel(normalizedCwd)
+    workspaceByCwd.value = {
+      ...workspaceByCwd.value,
+      [normalizedCwd]: updater(current),
+    }
+  }
+
+  function workspaceBranchStateFromModel(workspace: WorkspaceModel): UiWorkspaceBranchState {
+    return {
+      cwd: workspace.cwd,
+      isRepo: workspace.branch.isRepo,
+      isDirty: workspace.gitStatus.isDirty,
+      currentBranch: workspace.branch.currentBranch,
+      branches: workspace.branch.branches,
+      dirtySummary: workspace.gitStatus.summary ?? { ...EMPTY_WORKSPACE_DIRTY_SUMMARY },
+      dirtyEntries: workspace.gitStatus.entries,
+      isLoading: workspace.branch.isLoading,
+      isSwitching: workspace.branch.isSwitching,
+      blockedReasons: workspace.guard.blockedReasons,
+    }
+  }
+
   function upsertWorkspaceBranchState(cwd: string, updater: (current: UiWorkspaceBranchState) => UiWorkspaceBranchState): void {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return
@@ -511,6 +594,17 @@ export function useDesktopState() {
     })
   }
 
+  function countLiveServerRequestsInWorkspace(cwd: string): number {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return 0
+    let count = pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE]?.length ?? 0
+    for (const thread of allThreads.value) {
+      if (thread.cwd.trim() !== normalizedCwd) continue
+      count += pendingServerRequestsByThreadId.value[thread.id]?.length ?? 0
+    }
+    return count
+  }
+
   function getThreadCwdById(threadId: string): string {
     if (!threadId) return ''
     const thread = allThreads.value.find((row) => row.id === threadId)
@@ -545,6 +639,22 @@ export function useDesktopState() {
     return matches.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   }
 
+  function listLiveServerRequestsForWorkspace(cwd: string): UiServerRequest[] {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return []
+    const matches: UiServerRequest[] = [
+      ...(pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []),
+    ]
+    for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
+      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
+      const mappedCwd = getThreadCwdById(threadId)
+      if (mappedCwd === normalizedCwd) {
+        matches.push(...requests)
+      }
+    }
+    return matches.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
+  }
+
   function computeWorkspaceBranchBlockedReasons(
     cwd: string,
     state: Pick<UiWorkspaceBranchState, 'isRepo' | 'isDirty'>,
@@ -557,6 +667,72 @@ export function useDesktopState() {
     if (hasPendingServerRequestsInWorkspace(cwd)) reasons.push('pending_server_requests')
     if (hasPersistedServerRequestsInWorkspace(cwd)) reasons.push('persisted_server_requests')
     return reasons
+  }
+
+  function computeWorkspaceGuardState(cwd: string, state: Pick<UiWorkspaceBranchState, 'isRepo' | 'isDirty'>) {
+    const livePendingRequestCount = countLiveServerRequestsInWorkspace(cwd)
+    const persistedPendingRequestCount = listPersistedServerRequestsForWorkspace(cwd).length
+    const queuedMessageCount = allThreads.value.reduce((total, thread) => {
+      if (thread.cwd.trim() !== cwd.trim()) return total
+      return total + (queuedMessagesByThreadId.value[thread.id]?.length ?? 0)
+    }, 0)
+    const inProgressThreadCount = allThreads.value.reduce((total, thread) => {
+      if (thread.cwd.trim() !== cwd.trim()) return total
+      return total + (inProgressById.value[thread.id] === true ? 1 : 0)
+    }, 0)
+    return {
+      blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, state),
+      livePendingRequestCount,
+      persistedPendingRequestCount,
+      queuedMessageCount,
+      inProgressThreadCount,
+    }
+  }
+
+  function syncWorkspaceModelForCwd(cwd: string): void {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return
+    const branchState = workspaceBranchStateByCwd.value[normalizedCwd] ?? createWorkspaceBranchState(normalizedCwd)
+    const guard = computeWorkspaceGuardState(normalizedCwd, branchState)
+    const liveRequests = listLiveServerRequestsForWorkspace(normalizedCwd)
+    const persistedRequests = listPersistedServerRequestsForWorkspace(normalizedCwd)
+
+    upsertWorkspaceModel(normalizedCwd, (current) => ({
+      ...current,
+      branch: {
+        ...current.branch,
+        isRepo: branchState.isRepo,
+        currentBranch: branchState.currentBranch,
+        branches: branchState.branches,
+        isLoading: branchState.isLoading,
+        isSwitching: branchState.isSwitching,
+      },
+      guard,
+      gitStatus: {
+        isDirty: branchState.isDirty,
+        summary: branchState.dirtySummary,
+        entries: branchState.dirtyEntries,
+        fetchedAt: new Date().toISOString(),
+      },
+      approvals: {
+        live: liveRequests,
+        persisted: persistedRequests,
+      },
+    }))
+  }
+
+  function syncWorkspaceModelsForKnownCwds(): void {
+    const cwdSet = new Set<string>(Object.keys(workspaceByCwd.value))
+    for (const cwd of Object.keys(workspaceBranchStateByCwd.value)) {
+      if (cwd.trim()) cwdSet.add(cwd.trim())
+    }
+    for (const thread of allThreads.value) {
+      const cwd = thread.cwd.trim()
+      if (cwd) cwdSet.add(cwd)
+    }
+    for (const cwd of cwdSet) {
+      syncWorkspaceModelForCwd(cwd)
+    }
   }
 
   function syncWorkspaceBranchBlockedReasons(): void {
@@ -579,6 +755,7 @@ export function useDesktopState() {
       }
     }
     workspaceBranchStateByCwd.value = nextStateByCwd
+    syncWorkspaceModelsForKnownCwds()
   }
 
   async function refreshWorkspaceBranchState(
@@ -615,6 +792,7 @@ export function useDesktopState() {
       }
       nextState.blockedReasons = computeWorkspaceBranchBlockedReasons(normalizedCwd, nextState)
       upsertWorkspaceBranchState(normalizedCwd, () => nextState)
+      syncWorkspaceModelForCwd(normalizedCwd)
       return nextState
     } catch (unknownError) {
       upsertWorkspaceBranchState(normalizedCwd, (current) => ({
@@ -634,6 +812,150 @@ export function useDesktopState() {
     const cwd = selectedThread.value?.cwd?.trim() ?? ''
     if (!cwd) return null
     return refreshWorkspaceBranchState(cwd, options)
+  }
+
+  async function refreshWorkspaceDiffTotals(cwd: string): Promise<{ additions: number; deletions: number }> {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return { ...EMPTY_WORKSPACE_DIFF_TOTALS }
+    try {
+      const changes = await fetchWorkspaceChanges(normalizedCwd)
+      const nextTotals = changes
+        ? {
+            additions: changes.totalAdditions,
+            deletions: changes.totalDeletions,
+          }
+        : { ...EMPTY_WORKSPACE_DIFF_TOTALS }
+      upsertWorkspaceModel(normalizedCwd, (current) => ({
+        ...current,
+        diff: {
+          ...current.diff,
+          totalAdditions: nextTotals.additions,
+          totalDeletions: nextTotals.deletions,
+        },
+      }))
+      return nextTotals
+    } catch {
+      const emptyTotals = { ...EMPTY_WORKSPACE_DIFF_TOTALS }
+      upsertWorkspaceModel(normalizedCwd, (current) => ({
+        ...current,
+        diff: {
+          ...current.diff,
+          totalAdditions: emptyTotals.additions,
+          totalDeletions: emptyTotals.deletions,
+        },
+      }))
+      return emptyTotals
+    }
+  }
+
+  async function refreshSelectedWorkspaceDiffTotals(): Promise<{ additions: number; deletions: number }> {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return { ...EMPTY_WORKSPACE_DIFF_TOTALS }
+    return refreshWorkspaceDiffTotals(cwd)
+  }
+
+  function setWorkspaceDiffMode(cwd: string, mode: UiWorkspaceDiffMode): void {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return
+    upsertWorkspaceModel(normalizedCwd, (current) => ({
+      ...current,
+      diff: {
+        ...current.diff,
+        selectedMode: mode,
+      },
+      ui: {
+        ...current.ui,
+        lastOpenedAt: new Date().toISOString(),
+      },
+    }))
+  }
+
+  async function fetchWorkspaceDiffSnapshotForMode(
+    cwd: string,
+    mode: UiWorkspaceDiffMode,
+  ): Promise<UiWorkspaceDiffSnapshot> {
+    const normalizedCwd = cwd.trim()
+    const fallbackSnapshot: UiWorkspaceDiffSnapshot = {
+      mode,
+      cwd: normalizedCwd,
+      label: '',
+      baseRef: null,
+      targetRef: null,
+      warning: null,
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+    }
+    if (!normalizedCwd) return fallbackSnapshot
+
+    upsertWorkspaceModel(normalizedCwd, (current) => ({
+      ...current,
+      diff: {
+        ...current.diff,
+        isLoadingByMode: {
+          ...current.diff.isLoadingByMode,
+          [mode]: true,
+        },
+      },
+    }))
+
+    try {
+      const snapshot = await fetchWorkspaceDiffSnapshot(normalizedCwd, mode)
+      const normalizedSnapshot = snapshot ?? fallbackSnapshot
+      upsertWorkspaceModel(normalizedCwd, (current) => ({
+        ...current,
+        diff: {
+          ...current.diff,
+          selectedMode: normalizedSnapshot.mode,
+          snapshots: {
+            ...current.diff.snapshots,
+            [normalizedSnapshot.mode]: normalizedSnapshot,
+          },
+          isLoadingByMode: {
+            ...current.diff.isLoadingByMode,
+            [mode]: false,
+          },
+        },
+        ui: {
+          ...current.ui,
+          lastOpenedAt: new Date().toISOString(),
+        },
+      }))
+      return normalizedSnapshot
+    } catch {
+      upsertWorkspaceModel(normalizedCwd, (current) => ({
+        ...current,
+        diff: {
+          ...current.diff,
+          isLoadingByMode: {
+            ...current.diff.isLoadingByMode,
+            [mode]: false,
+          },
+        },
+      }))
+      return fallbackSnapshot
+    }
+  }
+
+  async function openPreferredWorkspaceDiffSnapshot(cwd: string): Promise<UiWorkspaceDiffSnapshot | null> {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return null
+    const preferredMode = workspaceByCwd.value[normalizedCwd]?.diff.selectedMode ?? 'unstaged'
+    if (preferredMode !== 'unstaged') {
+      return fetchWorkspaceDiffSnapshotForMode(normalizedCwd, preferredMode)
+    }
+
+    const unstagedSnapshot = await fetchWorkspaceDiffSnapshotForMode(normalizedCwd, 'unstaged')
+    if (unstagedSnapshot.files.length > 0 || unstagedSnapshot.warning) {
+      return unstagedSnapshot
+    }
+
+    const stagedSnapshot = await fetchWorkspaceDiffSnapshotForMode(normalizedCwd, 'staged')
+    if (stagedSnapshot.files.length > 0) {
+      return stagedSnapshot
+    }
+
+    return unstagedSnapshot
   }
 
   async function runSelectedWorkspaceBranchAction(
@@ -1443,6 +1765,7 @@ export function useDesktopState() {
       ])
       await loadMessages(selectedThreadId.value)
       await refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
+      await refreshSelectedWorkspaceDiffTotals()
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : 'Unknown application error'
     }
@@ -1456,6 +1779,7 @@ export function useDesktopState() {
     if (!threadId) return
 
     void refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
+    void refreshSelectedWorkspaceDiffTotals()
 
     void loadMessages(threadId, {
       signal: selectThreadLoadAbortController?.signal,
@@ -1972,6 +2296,8 @@ export function useDesktopState() {
     selectedThreadServerRequests,
     selectedThreadPersistedServerRequests,
     selectedWorkspacePersistedServerRequests,
+    selectedWorkspaceModel,
+    selectedWorkspaceDiffTotals,
     selectedThreadFileChanges,
     selectedQueuedMessages,
     selectedWorkspaceBranchState,
@@ -2002,6 +2328,10 @@ export function useDesktopState() {
     interruptSelectedThreadTurn,
     compactSelectedThreadContext,
     refreshSelectedWorkspaceBranchState,
+    refreshSelectedWorkspaceDiffTotals,
+    fetchWorkspaceDiffSnapshotForMode,
+    openPreferredWorkspaceDiffSnapshot,
+    setWorkspaceDiffMode,
     switchSelectedWorkspaceBranch,
     createAndSwitchSelectedWorkspaceBranch,
     setSelectedModelId,
