@@ -178,6 +178,7 @@ export type UiWorkspaceDiffMode =
   | 'staged'
   | 'branch'
   | 'lastCommit'
+  | 'gitStatus'
 
 export type UiWorkspaceDiffSnapshot = {
   mode: UiWorkspaceDiffMode

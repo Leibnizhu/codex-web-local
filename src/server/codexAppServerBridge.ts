@@ -138,6 +138,7 @@ type WorkspaceDiffMode =
   | 'staged'
   | 'branch'
   | 'lastCommit'
+  | 'gitStatus'
 
 type WorkspaceDiffSnapshot = {
   mode: WorkspaceDiffMode
@@ -215,7 +216,13 @@ function parseNumstat(output: string): Array<{ path: string; additions: number; 
 
 function normalizeWorkspaceDiffMode(value: string): WorkspaceDiffMode | null {
   const normalized = value.trim()
-  if (normalized === 'unstaged' || normalized === 'staged' || normalized === 'branch' || normalized === 'lastCommit') {
+  if (
+    normalized === 'unstaged' ||
+    normalized === 'staged' ||
+    normalized === 'branch' ||
+    normalized === 'lastCommit' ||
+    normalized === 'gitStatus'
+  ) {
     return normalized
   }
   return null
@@ -363,17 +370,37 @@ async function collectWorkspaceChangesForDiffArgs(
   return files.sort((first, second) => first.path.localeCompare(second.path))
 }
 
-async function resolveWorkspaceDiffBaseBranch(cwd: string): Promise<string | null> {
+async function resolveWorkspaceDiffBaseBranch(
+  cwd: string,
+  preferredBaseBranch: string | null,
+): Promise<{ baseBranch: string | null; warning: string | null }> {
   const targetCwd = resolve(cwd)
+  const normalizedPreferred = preferredBaseBranch?.trim() ?? ''
+  if (normalizedPreferred) {
+    try {
+      await runGit(['rev-parse', '--verify', normalizedPreferred], targetCwd)
+      return { baseBranch: normalizedPreferred, warning: null }
+    } catch {
+      // Fall through to auto-detection and surface a warning only if we can recover.
+    }
+  }
   for (const candidate of ['main', 'master']) {
     try {
       await runGit(['rev-parse', '--verify', candidate], targetCwd)
-      return candidate
+      return {
+        baseBranch: candidate,
+        warning: normalizedPreferred ? `Configured base branch ${normalizedPreferred} not found; using ${candidate}` : null,
+      }
     } catch {
       continue
     }
   }
-  return null
+  return {
+    baseBranch: null,
+    warning: normalizedPreferred
+      ? `Configured base branch ${normalizedPreferred} not found`
+      : 'Base branch main/master not found',
+  }
 }
 
 function summarizeWorkspaceFileChanges(files: WorkspaceFileChange[]): Pick<WorkspaceDiffSnapshot, 'totalAdditions' | 'totalDeletions'> {
@@ -383,7 +410,11 @@ function summarizeWorkspaceFileChanges(files: WorkspaceFileChange[]): Pick<Works
   }
 }
 
-async function collectWorkspaceDiffSnapshot(cwd: string, mode: WorkspaceDiffMode): Promise<WorkspaceDiffSnapshot> {
+async function collectWorkspaceDiffSnapshot(
+  cwd: string,
+  mode: WorkspaceDiffMode,
+  options: { baseBranch?: string | null } = {},
+): Promise<WorkspaceDiffSnapshot> {
   const targetCwd = resolve(cwd)
   await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
 
@@ -444,7 +475,22 @@ async function collectWorkspaceDiffSnapshot(cwd: string, mode: WorkspaceDiffMode
     }
   }
 
-  const baseBranch = await resolveWorkspaceDiffBaseBranch(targetCwd)
+  if (mode === 'gitStatus') {
+    const status = await readWorkspaceGitStatus(targetCwd)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Git status',
+      baseRef: null,
+      targetRef: status.currentBranch || 'WORKTREE',
+      warning: null,
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+    }
+  }
+
+  const { baseBranch, warning } = await resolveWorkspaceDiffBaseBranch(targetCwd, options.baseBranch ?? null)
   if (!baseBranch) {
     return {
       mode,
@@ -452,7 +498,7 @@ async function collectWorkspaceDiffSnapshot(cwd: string, mode: WorkspaceDiffMode
       label: 'Branch changes',
       baseRef: null,
       targetRef: 'HEAD',
-      warning: 'Base branch main/master not found',
+      warning,
       files: [],
       totalAdditions: 0,
       totalDeletions: 0,
@@ -472,7 +518,7 @@ async function collectWorkspaceDiffSnapshot(cwd: string, mode: WorkspaceDiffMode
     label: `Branch changes vs ${baseBranch}`,
     baseRef: mergeBase || baseBranch,
     targetRef: 'HEAD',
-    warning: null,
+    warning,
     files,
     ...totals,
   }
@@ -1328,6 +1374,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
       if (req.method === 'GET' && url.pathname === '/codex-api/workspace-diff-mode') {
         const cwd = url.searchParams.get('cwd') ?? ''
         const mode = normalizeWorkspaceDiffMode(url.searchParams.get('mode') ?? '')
+        const baseBranch = url.searchParams.get('baseBranch')
         if (!cwd.trim()) {
           setJson(res, 400, { error: 'Missing query parameter: cwd' })
           return
@@ -1337,7 +1384,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           return
         }
         try {
-          const snapshot = await collectWorkspaceDiffSnapshot(cwd, mode)
+          const snapshot = await collectWorkspaceDiffSnapshot(cwd, mode, { baseBranch })
           setJson(res, 200, snapshot)
           return
         } catch (error) {

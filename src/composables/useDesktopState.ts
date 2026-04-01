@@ -51,6 +51,7 @@ import type {
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 import {
   loadAutoRefreshEnabled,
+  loadWorkspaceBaseBranchMap,
   loadProjectDisplayNames,
   loadProjectOrder,
   loadRateLimitUsage,
@@ -59,6 +60,7 @@ import {
   loadThreadContextUsageMap,
   loadThreadScrollStateMap,
   saveAutoRefreshEnabled,
+  saveWorkspaceBaseBranchMap,
   saveProjectDisplayNames,
   saveProjectOrder,
   saveRateLimitUsage,
@@ -252,6 +254,7 @@ export function useDesktopState() {
   const compactingContextByThreadId = ref<Record<string, boolean>>({})
   const workspaceBranchStateByCwd = ref<Record<string, UiWorkspaceBranchState>>({})
   const workspaceByCwd = ref<Record<string, WorkspaceModel>>({})
+  const workspaceBaseBranchByCwd = ref<Record<string, string>>(loadWorkspaceBaseBranchMap())
 
   const isLoadingThreads = ref(false)
   const isLoadingMessages = ref(false)
@@ -490,7 +493,7 @@ export function useDesktopState() {
         isRepo: false,
         currentBranch: '',
         branches: [],
-        baseBranch: null,
+        baseBranch: workspaceBaseBranchByCwd.value[cwd] ?? null,
         isDetachedHead: false,
         isLoading: false,
         isSwitching: false,
@@ -704,6 +707,7 @@ export function useDesktopState() {
         isRepo: branchState.isRepo,
         currentBranch: branchState.currentBranch,
         branches: branchState.branches,
+        baseBranch: workspaceBaseBranchByCwd.value[normalizedCwd] ?? current.branch.baseBranch,
         isLoading: branchState.isLoading,
         isSwitching: branchState.isSwitching,
       },
@@ -870,6 +874,30 @@ export function useDesktopState() {
     }))
   }
 
+  function setWorkspaceBaseBranch(cwd: string, branch: string | null): void {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return
+    const normalizedBranch = branch?.trim() ?? ''
+
+    if (normalizedBranch) {
+      workspaceBaseBranchByCwd.value = {
+        ...workspaceBaseBranchByCwd.value,
+        [normalizedCwd]: normalizedBranch,
+      }
+    } else if (workspaceBaseBranchByCwd.value[normalizedCwd]) {
+      workspaceBaseBranchByCwd.value = omitKey(workspaceBaseBranchByCwd.value, normalizedCwd)
+    }
+    saveWorkspaceBaseBranchMap(workspaceBaseBranchByCwd.value)
+
+    upsertWorkspaceModel(normalizedCwd, (current) => ({
+      ...current,
+      branch: {
+        ...current.branch,
+        baseBranch: normalizedBranch || null,
+      },
+    }))
+  }
+
   async function fetchWorkspaceDiffSnapshotForMode(
     cwd: string,
     mode: UiWorkspaceDiffMode,
@@ -900,7 +928,11 @@ export function useDesktopState() {
     }))
 
     try {
-      const snapshot = await fetchWorkspaceDiffSnapshot(normalizedCwd, mode)
+      const baseBranch =
+        mode === 'branch'
+          ? (workspaceBaseBranchByCwd.value[normalizedCwd] ?? workspaceByCwd.value[normalizedCwd]?.branch.baseBranch ?? null)
+          : null
+      const snapshot = await fetchWorkspaceDiffSnapshot(normalizedCwd, mode, { baseBranch })
       const normalizedSnapshot = snapshot ?? fallbackSnapshot
       upsertWorkspaceModel(normalizedCwd, (current) => ({
         ...current,
@@ -2332,6 +2364,7 @@ export function useDesktopState() {
     fetchWorkspaceDiffSnapshotForMode,
     openPreferredWorkspaceDiffSnapshot,
     setWorkspaceDiffMode,
+    setWorkspaceBaseBranch,
     switchSelectedWorkspaceBranch,
     createAndSwitchSelectedWorkspaceBranch,
     setSelectedModelId,

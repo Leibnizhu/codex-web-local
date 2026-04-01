@@ -173,6 +173,7 @@
                 :ui-language="uiLanguage"
                 :close-label="t('app.closeCodePreview')"
                 @change-workspace-mode="onChangeWorkspaceDiffMode"
+                @update-workspace-base-branch="onUpdateWorkspaceBaseBranch"
                 @close="onCloseFilePreview"
               />
             </div>
@@ -343,6 +344,7 @@ const {
   fetchWorkspaceDiffSnapshotForMode,
   openPreferredWorkspaceDiffSnapshot,
   setWorkspaceDiffMode,
+  setWorkspaceBaseBranch,
   switchSelectedWorkspaceBranch,
   createAndSwitchSelectedWorkspaceBranch,
   setSelectedModelId,
@@ -821,6 +823,15 @@ async function onChangeWorkspaceDiffMode(mode: UiWorkspaceDiffMode): Promise<voi
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   if (!cwd) return
   await openWorkspaceDiffPanel(cwd, mode)
+}
+
+async function onUpdateWorkspaceBaseBranch(branch: string): Promise<void> {
+  const cwd = selectedThread.value?.cwd?.trim() ?? ''
+  if (!cwd) return
+  setWorkspaceBaseBranch(cwd, branch.trim() || null)
+  if (previewPanel.value?.kind === 'workspace') {
+    await openWorkspaceDiffPanel(cwd, 'branch')
+  }
 }
 
 function loadSidebarCollapsed(): boolean {

@@ -251,7 +251,7 @@ function normalizePersistedServerRequest(value: unknown): UiPersistedServerReque
 }
 
 function normalizeWorkspaceDiffMode(value: unknown): UiWorkspaceDiffMode {
-  const allowed: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit']
+  const allowed: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit', 'gitStatus']
   return typeof value === 'string' && allowed.includes(value as UiWorkspaceDiffMode)
     ? (value as UiWorkspaceDiffMode)
     : 'unstaged'
@@ -883,11 +883,14 @@ export async function fetchWorkspaceFullDiff(cwd: string): Promise<string> {
 export async function fetchWorkspaceDiffSnapshot(
   cwd: string,
   mode: UiWorkspaceDiffMode,
+  options: { baseBranch?: string | null } = {},
 ): Promise<UiWorkspaceDiffSnapshot | null> {
   const normalizedCwd = cwd.trim()
   if (!normalizedCwd) return null
   const normalizedMode = normalizeWorkspaceDiffMode(mode)
-  const payload = await fetchWorkspaceDiffModeRequest(normalizedCwd, normalizedMode)
+  const payload = await fetchWorkspaceDiffModeRequest(normalizedCwd, normalizedMode, {
+    baseBranch: options.baseBranch ?? null,
+  })
   return normalizeWorkspaceDiffSnapshot(payload, normalizedCwd, normalizedMode)
 }
 

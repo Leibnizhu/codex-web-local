@@ -30,12 +30,84 @@
       <div class="workspace-diff-mode-meta">
         <p class="workspace-diff-mode-description">{{ workspaceModeDescription }}</p>
         <p v-if="workspaceModeRefs" class="workspace-diff-mode-refs">{{ workspaceModeRefs }}</p>
+        <div v-if="showBaseBranchSelector" class="workspace-diff-base-branch-row">
+          <label class="workspace-diff-base-branch-label" for="workspace-base-branch-select">
+            {{ tUi(normalizedLanguage, 'diffPanel.baseBranchLabel') }}
+          </label>
+          <select
+            id="workspace-base-branch-select"
+            class="workspace-diff-base-branch-select"
+            :value="selectedBaseBranchValue"
+            @change="onBaseBranchChange"
+          >
+            <option value="">{{ tUi(normalizedLanguage, 'diffPanel.baseBranchAuto') }}</option>
+            <option
+              v-for="branch in baseBranchOptions"
+              :key="branch"
+              :value="branch"
+            >
+              {{ branch }}
+            </option>
+          </select>
+        </div>
       </div>
       <p v-if="workspaceSnapshot.warning" class="workspace-diff-warning">{{ workspaceSnapshot.warning }}</p>
-      <p v-if="workspaceSnapshot.files.length === 0" class="workspace-diff-empty">
+      <section v-if="isGitStatusMode" class="workspace-status-panel">
+        <div class="workspace-status-summary">
+          <p class="workspace-status-branch">
+            {{ tUi(normalizedLanguage, 'diffPanel.gitStatusCurrentBranch', { branch: workspaceCurrentBranch }) }}
+          </p>
+          <div v-if="workspaceStatusSummaryLabels.length > 0" class="workspace-status-summary-chips">
+            <span
+              v-for="label in workspaceStatusSummaryLabels"
+              :key="label"
+              class="workspace-status-summary-chip"
+            >
+              {{ label }}
+            </span>
+          </div>
+          <div v-if="workspaceBlockedReasonLabels.length > 0" class="workspace-status-blockers">
+            <p class="workspace-status-blockers-title">{{ tUi(normalizedLanguage, 'diffPanel.gitStatusBlockersTitle') }}</p>
+            <div class="workspace-status-summary-chips">
+              <span
+                v-for="label in workspaceBlockedReasonLabels"
+                :key="label"
+                class="workspace-status-blocker-chip"
+              >
+                {{ label }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <p v-if="workspaceStatusEntries.length === 0" class="workspace-diff-empty">
+          {{ tUi(normalizedLanguage, 'diffPanel.gitStatusEmpty') }}
+        </p>
+        <ul v-else class="workspace-status-list">
+          <li
+            v-for="entry in workspaceStatusEntries"
+            :key="`wstatus:${entry.path}:${entry.x}${entry.y}`"
+            class="workspace-status-item"
+          >
+            <div class="workspace-status-item-main">
+              <span class="workspace-status-item-path">{{ formatDisplayPath(entry.path, panel.cwd) }}</span>
+              <div class="workspace-status-item-tags">
+                <span class="workspace-status-item-tag">{{ getWorkspaceStatusKindLabel(entry.kind) }}</span>
+                <span v-if="entry.staged" class="workspace-status-item-tag">
+                  {{ tUi(normalizedLanguage, 'diffPanel.gitStatusTagStaged') }}
+                </span>
+                <span v-if="entry.unstaged" class="workspace-status-item-tag">
+                  {{ tUi(normalizedLanguage, 'diffPanel.gitStatusTagUnstaged') }}
+                </span>
+              </div>
+            </div>
+            <span class="workspace-status-item-xy">{{ entry.x }}{{ entry.y }}</span>
+          </li>
+        </ul>
+      </section>
+      <p v-else-if="workspaceSnapshot.files.length === 0" class="workspace-diff-empty">
         {{ workspaceEmptyMessage }}
       </p>
-      <ul class="workspace-diff-list">
+      <ul v-else class="workspace-diff-list">
         <li v-for="change in workspaceSnapshot.files" :key="`workspace:${workspaceSnapshot.mode}:${change.path}`" class="workspace-diff-item">
           <button
             type="button"
@@ -102,7 +174,14 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import type { UiChangedFile, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot, WorkspaceModel } from '../../types/codex'
+import type {
+  UiChangedFile,
+  UiWorkspaceDiffMode,
+  UiWorkspaceDiffSnapshot,
+  UiWorkspaceDirtyKind,
+  WorkspaceBranchBlockReason,
+  WorkspaceModel,
+} from '../../types/codex'
 import type { FilePreviewPayload } from '../../api/codexGateway'
 import { formatDisplayPath } from '../../utils/pathUtils'
 import IconTablerX from '../icons/IconTablerX.vue'
@@ -142,10 +221,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   'change-workspace-mode': [mode: UiWorkspaceDiffMode]
+  'update-workspace-base-branch': [branch: string]
 }>()
 
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
-const workspaceDiffModes: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit']
+const workspaceDiffModes: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit', 'gitStatus']
 const EMPTY_WORKSPACE_SNAPSHOT: UiWorkspaceDiffSnapshot = {
   mode: 'unstaged',
   cwd: '',
@@ -407,6 +487,36 @@ const workspaceSnapshot = computed<UiWorkspaceDiffSnapshot>(() => {
     cwd: model.cwd,
   }
 })
+const isGitStatusMode = computed(() => props.panel.kind === 'workspace' && workspaceSnapshot.value.mode === 'gitStatus')
+const workspaceCurrentBranch = computed(() => props.workspaceModel?.branch.currentBranch?.trim() ?? '--')
+const showBaseBranchSelector = computed(() => props.panel.kind === 'workspace' && workspaceSnapshot.value.mode === 'branch')
+const selectedBaseBranchValue = computed(() => props.workspaceModel?.branch.baseBranch ?? '')
+const baseBranchOptions = computed(() => {
+  const branches = props.workspaceModel?.branch.branches ?? []
+  const currentBase = props.workspaceModel?.branch.baseBranch?.trim() ?? ''
+  const rows = branches.map((branch) => branch.trim()).filter((branch) => branch.length > 0)
+  if (currentBase && !rows.includes(currentBase)) {
+    rows.unshift(currentBase)
+  }
+  return Array.from(new Set(rows)).sort((first, second) => first.localeCompare(second))
+})
+const workspaceStatusEntries = computed(() => props.workspaceModel?.gitStatus.entries ?? [])
+const workspaceStatusSummaryLabels = computed(() => {
+  const summary = props.workspaceModel?.gitStatus.summary
+  if (!summary) return []
+  const labels: string[] = []
+  if (summary.trackedModified > 0) labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyTrackedModified', { count: summary.trackedModified }))
+  if (summary.staged > 0) labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyStaged', { count: summary.staged }))
+  if (summary.untracked > 0) labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyUntracked', { count: summary.untracked }))
+  if (summary.conflicted > 0) labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyConflicted', { count: summary.conflicted }))
+  if (summary.renamed > 0) labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyRenamed', { count: summary.renamed }))
+  if (summary.deleted > 0) labels.push(tUi(normalizedLanguage.value, 'composer.branchDirtyDeleted', { count: summary.deleted }))
+  return labels
+})
+const workspaceBlockedReasonLabels = computed(() => {
+  const reasons = props.workspaceModel?.guard.blockedReasons ?? []
+  return reasons.map((reason) => getWorkspaceBlockedReasonLabel(reason))
+})
 
 watch(
   () =>
@@ -424,7 +534,8 @@ function getWorkspaceModeLabel(mode: UiWorkspaceDiffMode): string {
   if (mode === 'unstaged') return tUi(normalizedLanguage.value, 'diffPanel.mode.unstaged')
   if (mode === 'staged') return tUi(normalizedLanguage.value, 'diffPanel.mode.staged')
   if (mode === 'branch') return tUi(normalizedLanguage.value, 'diffPanel.mode.branch')
-  return tUi(normalizedLanguage.value, 'diffPanel.mode.lastCommit')
+  if (mode === 'lastCommit') return tUi(normalizedLanguage.value, 'diffPanel.mode.lastCommit')
+  return tUi(normalizedLanguage.value, 'diffPanel.mode.gitStatus')
 }
 
 const workspaceModeDescription = computed(() => {
@@ -433,7 +544,8 @@ const workspaceModeDescription = computed(() => {
   if (mode === 'unstaged') return tUi(normalizedLanguage.value, 'diffPanel.desc.unstaged')
   if (mode === 'staged') return tUi(normalizedLanguage.value, 'diffPanel.desc.staged')
   if (mode === 'branch') return tUi(normalizedLanguage.value, 'diffPanel.desc.branch')
-  return tUi(normalizedLanguage.value, 'diffPanel.desc.lastCommit')
+  if (mode === 'lastCommit') return tUi(normalizedLanguage.value, 'diffPanel.desc.lastCommit')
+  return tUi(normalizedLanguage.value, 'diffPanel.desc.gitStatus')
 })
 
 const workspaceModeRefs = computed(() => {
@@ -456,6 +568,30 @@ const workspaceEmptyMessage = computed(() => {
   }
   return tUi(normalizedLanguage.value, 'diffPanel.empty.noChanges')
 })
+
+function getWorkspaceStatusKindLabel(kind: UiWorkspaceDirtyKind): string {
+  if (kind === 'modified') return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.modified')
+  if (kind === 'added') return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.added')
+  if (kind === 'deleted') return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.deleted')
+  if (kind === 'renamed') return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.renamed')
+  if (kind === 'untracked') return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.untracked')
+  if (kind === 'conflicted') return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.conflicted')
+  return tUi(normalizedLanguage.value, 'diffPanel.gitStatusKind.unknown')
+}
+
+function getWorkspaceBlockedReasonLabel(reason: WorkspaceBranchBlockReason): string {
+  if (reason === 'not_repo') return tUi(normalizedLanguage.value, 'composer.branchBlockedNotRepo')
+  if (reason === 'workspace_dirty') return tUi(normalizedLanguage.value, 'composer.branchBlockedDirty')
+  if (reason === 'thread_in_progress') return tUi(normalizedLanguage.value, 'composer.branchBlockedInProgress')
+  if (reason === 'queued_messages') return tUi(normalizedLanguage.value, 'composer.branchBlockedQueued')
+  if (reason === 'pending_server_requests') return tUi(normalizedLanguage.value, 'composer.branchBlockedPendingRequests')
+  return tUi(normalizedLanguage.value, 'composer.branchBlockedPersistedRequests')
+}
+
+function onBaseBranchChange(event: Event): void {
+  const target = event.target as HTMLSelectElement | null
+  emit('update-workspace-base-branch', target?.value ?? '')
+}
 
 const highlightedPreviewHtml = computed(() => {
   if (props.panel.kind === 'workspace' || props.panel.kind === 'file') return ''
@@ -607,6 +743,18 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
   @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
 }
 
+.workspace-diff-base-branch-row {
+  @apply mt-2 flex items-center gap-2;
+}
+
+.workspace-diff-base-branch-label {
+  @apply text-[10px] leading-4 text-zinc-500 shrink-0;
+}
+
+.workspace-diff-base-branch-select {
+  @apply min-w-0 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] leading-4 text-zinc-700;
+}
+
 .workspace-diff-warning {
   @apply m-0 border-b border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800;
 }
@@ -617,6 +765,60 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 
 .workspace-diff-list {
   @apply list-none m-0 p-0;
+}
+
+.workspace-status-panel {
+  @apply border-b border-zinc-200 bg-zinc-50;
+}
+
+.workspace-status-summary {
+  @apply px-2.5 py-2 border-b border-zinc-200;
+}
+
+.workspace-status-branch {
+  @apply m-0 text-[11px] leading-4 text-zinc-700;
+}
+
+.workspace-status-summary-chips {
+  @apply mt-2 flex flex-wrap gap-1.5;
+}
+
+.workspace-status-summary-chip,
+.workspace-status-blocker-chip,
+.workspace-status-item-tag {
+  @apply inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] leading-4 text-zinc-600;
+}
+
+.workspace-status-blockers {
+  @apply mt-2;
+}
+
+.workspace-status-blockers-title {
+  @apply m-0 text-[10px] leading-4 text-zinc-500;
+}
+
+.workspace-status-list {
+  @apply list-none m-0 p-0;
+}
+
+.workspace-status-item {
+  @apply flex items-start justify-between gap-3 border-b border-zinc-200 px-2.5 py-2 last:border-b-0;
+}
+
+.workspace-status-item-main {
+  @apply min-w-0;
+}
+
+.workspace-status-item-path {
+  @apply block text-[11px] leading-4 text-zinc-800 break-all;
+}
+
+.workspace-status-item-tags {
+  @apply mt-1 flex flex-wrap gap-1.5;
+}
+
+.workspace-status-item-xy {
+  @apply shrink-0 text-[10px] leading-4 text-zinc-500 font-mono;
 }
 
 .workspace-diff-item {

@@ -204,6 +204,10 @@ const UI_TEXT = {
     zh: '上一轮更改',
     en: 'Last commit',
   },
+  'diffPanel.mode.gitStatus': {
+    zh: 'Git 状态',
+    en: 'Git status',
+  },
   'diffPanel.desc.unstaged': {
     zh: '显示当前工作区尚未暂存的内容差异。',
     en: 'Shows unstaged content differences in the current workspace.',
@@ -220,6 +224,18 @@ const UI_TEXT = {
     zh: '显示最近一次提交的内容差异。',
     en: 'Shows the content differences from the most recent commit.',
   },
+  'diffPanel.desc.gitStatus': {
+    zh: '显示当前工作区的 Git 状态与阻塞原因。',
+    en: 'Shows the current Git states and blockers for the workspace.',
+  },
+  'diffPanel.baseBranchLabel': {
+    zh: '基线分支',
+    en: 'Base branch',
+  },
+  'diffPanel.baseBranchAuto': {
+    zh: '自动选择',
+    en: 'Auto',
+  },
   'diffPanel.empty.noChanges': {
     zh: '当前模式下没有可显示的差异。',
     en: 'No differences are available for this mode.',
@@ -231,6 +247,54 @@ const UI_TEXT = {
   'diffPanel.empty.warning': {
     zh: '当前模式无法稳定生成差异，请查看提示信息。',
     en: 'The selected mode could not produce a stable diff. See the warning for details.',
+  },
+  'diffPanel.gitStatusCurrentBranch': {
+    zh: ({ branch }) => `当前分支：${String(branch)}`,
+    en: ({ branch }) => `Current branch: ${String(branch)}`,
+  },
+  'diffPanel.gitStatusBlockersTitle': {
+    zh: '当前阻塞原因',
+    en: 'Current blockers',
+  },
+  'diffPanel.gitStatusEmpty': {
+    zh: '当前工作区没有额外的 Git 状态条目。',
+    en: 'No additional Git state entries were found for this workspace.',
+  },
+  'diffPanel.gitStatusTagStaged': {
+    zh: '已暂存',
+    en: 'Staged',
+  },
+  'diffPanel.gitStatusTagUnstaged': {
+    zh: '未暂存',
+    en: 'Unstaged',
+  },
+  'diffPanel.gitStatusKind.modified': {
+    zh: '已修改',
+    en: 'Modified',
+  },
+  'diffPanel.gitStatusKind.added': {
+    zh: '新增',
+    en: 'Added',
+  },
+  'diffPanel.gitStatusKind.deleted': {
+    zh: '删除',
+    en: 'Deleted',
+  },
+  'diffPanel.gitStatusKind.renamed': {
+    zh: '重命名',
+    en: 'Renamed',
+  },
+  'diffPanel.gitStatusKind.untracked': {
+    zh: '未跟踪',
+    en: 'Untracked',
+  },
+  'diffPanel.gitStatusKind.conflicted': {
+    zh: '冲突',
+    en: 'Conflicted',
+  },
+  'diffPanel.gitStatusKind.unknown': {
+    zh: '未知',
+    en: 'Unknown',
   },
   'composer.branchDirtyTrackedModified': {
     zh: ({ count }) => `已修改 ${String(count)} 项`,

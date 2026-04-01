@@ -8,6 +8,7 @@ const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v
 const AUTO_REFRESH_ENABLED_STORAGE_KEY = 'codex-web-local.auto-refresh-enabled.v1'
 const CONTEXT_USAGE_STORAGE_KEY = 'codex-web-local.thread-context-usage.v2'
 const RATE_LIMIT_USAGE_STORAGE_KEY = 'codex-web-local.rate-limit-usage.v1'
+const WORKSPACE_BASE_BRANCH_STORAGE_KEY = 'codex-web-local.workspace-base-branch.v1'
 
 function clamp(value: number, minValue: number, maxValue: number): number {
   return Math.min(Math.max(value, minValue), maxValue)
@@ -264,4 +265,31 @@ export function saveRateLimitUsage(value: UiRateLimitUsage | null): void {
     return
   }
   window.localStorage.setItem(RATE_LIMIT_USAGE_STORAGE_KEY, JSON.stringify(value))
+}
+
+export function loadWorkspaceBaseBranchMap(): Record<string, string> {
+  if (typeof window === 'undefined') return {}
+
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_BASE_BRANCH_STORAGE_KEY)
+    if (!raw) return {}
+
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+
+    const normalized: Record<string, string> = {}
+    for (const [cwd, branch] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof cwd !== 'string' || cwd.trim().length === 0) continue
+      if (typeof branch !== 'string' || branch.trim().length === 0) continue
+      normalized[cwd.trim()] = branch.trim()
+    }
+    return normalized
+  } catch {
+    return {}
+  }
+}
+
+export function saveWorkspaceBaseBranchMap(state: Record<string, string>): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(WORKSPACE_BASE_BRANCH_STORAGE_KEY, JSON.stringify(state))
 }

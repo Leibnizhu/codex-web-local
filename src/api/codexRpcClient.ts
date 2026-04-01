@@ -265,11 +265,19 @@ export async function fetchPersistedServerRequests(): Promise<unknown[]> {
   return Array.isArray(data) ? data : []
 }
 
-export async function fetchWorkspaceDiffMode(cwd: string, mode: string): Promise<unknown> {
+export async function fetchWorkspaceDiffMode(
+  cwd: string,
+  mode: string,
+  options: { baseBranch?: string | null } = {},
+): Promise<unknown> {
   const query = new URLSearchParams({
     cwd,
     mode,
   })
+  const baseBranch = options.baseBranch?.trim() ?? ''
+  if (baseBranch) {
+    query.set('baseBranch', baseBranch)
+  }
   const response = await fetch(`/codex-api/workspace-diff-mode?${query.toString()}`)
 
   let payload: unknown = null
