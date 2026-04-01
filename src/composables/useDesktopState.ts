@@ -3,6 +3,7 @@ import {
   archiveThread,
   compactThreadContext,
   createAndSwitchWorkspaceBranch,
+  dismissPersistedServerRequests as dismissPersistedServerRequestsRequest,
   fetchWorkspaceBranches,
   fetchWorkspaceGitStatus,
   getAvailableModelIds,
@@ -291,6 +292,11 @@ export function useDesktopState() {
     }
     return rows.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   })
+  const selectedWorkspacePersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return []
+    return listPersistedServerRequestsForWorkspace(cwd)
+  })
   const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
     const threadId = selectedThreadId.value
     if (!threadId) return null
@@ -512,21 +518,31 @@ export function useDesktopState() {
   }
 
   function hasPersistedServerRequestsInWorkspace(cwd: string): boolean {
+    return listPersistedServerRequestsForWorkspace(cwd).length > 0
+  }
+
+  function listPersistedServerRequestsForWorkspace(cwd: string): UiPersistedServerRequest[] {
     const normalizedCwd = cwd.trim()
-    if (!normalizedCwd) return false
+    if (!normalizedCwd) return []
     const globalRequests = persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
-    if (globalRequests.length > 0) {
-      return true
-    }
-    return Object.entries(persistedServerRequestsByThreadId.value).some(([threadId, requests]) => {
-      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) return false
-      return requests.some((request) => {
+    const matches: UiPersistedServerRequest[] = [...globalRequests]
+    for (const [threadId, requests] of Object.entries(persistedServerRequestsByThreadId.value)) {
+      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
+      for (const request of requests) {
         const requestCwd = request.cwd.trim()
-        if (requestCwd) return requestCwd === normalizedCwd
+        if (requestCwd) {
+          if (requestCwd === normalizedCwd) {
+            matches.push(request)
+          }
+          continue
+        }
         const mappedCwd = getThreadCwdById(request.threadId)
-        return mappedCwd === normalizedCwd
-      })
-    })
+        if (mappedCwd === normalizedCwd) {
+          matches.push(request)
+        }
+      }
+    }
+    return matches.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   }
 
   function computeWorkspaceBranchBlockedReasons(
@@ -1859,6 +1875,24 @@ export function useDesktopState() {
     }
   }
 
+  async function dismissPersistedServerRequests(requestIds: number[]): Promise<boolean> {
+    const normalizedRequestIds = requestIds
+      .filter((value) => Number.isInteger(value))
+      .map((value) => Math.trunc(value))
+    if (normalizedRequestIds.length === 0) return false
+
+    try {
+      const dismissedIds = await dismissPersistedServerRequestsRequest(normalizedRequestIds)
+      for (const requestId of dismissedIds) {
+        removePersistedServerRequestById(requestId)
+      }
+      return dismissedIds.length > 0
+    } catch (unknownError) {
+      error.value = unknownError instanceof Error ? unknownError.message : 'Failed to dismiss persisted server requests'
+      return false
+    }
+  }
+
   function stopAutoRefreshTimer(options: { updatePreference?: boolean } = {}): void {
     const updatePreference = options.updatePreference ?? true
 
@@ -1937,6 +1971,7 @@ export function useDesktopState() {
     selectedThreadScrollState,
     selectedThreadServerRequests,
     selectedThreadPersistedServerRequests,
+    selectedWorkspacePersistedServerRequests,
     selectedThreadFileChanges,
     selectedQueuedMessages,
     selectedWorkspaceBranchState,
@@ -1973,6 +2008,7 @@ export function useDesktopState() {
     setSelectedReasoningEffort,
     setSelectedChatMode,
     respondToPendingServerRequest,
+    dismissPersistedServerRequests,
     renameProject,
     removeProject,
     reorderProject,

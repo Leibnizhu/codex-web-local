@@ -1,4 +1,5 @@
 import {
+  dismissPersistedServerRequests as dismissPersistedServerRequestsRequest,
   fetchPersistedServerRequests,
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
@@ -239,6 +240,9 @@ function normalizePersistedServerRequest(value: unknown): UiPersistedServerReque
     receivedAtIso,
     resolvedAtIso: typeof row.resolvedAtIso === 'string' && row.resolvedAtIso.trim().length > 0 ? row.resolvedAtIso : null,
     resolutionKind: typeof row.resolutionKind === 'string' && row.resolutionKind.trim().length > 0 ? row.resolutionKind : null,
+    dismissedAtIso: typeof row.dismissedAtIso === 'string' && row.dismissedAtIso.trim().length > 0 ? row.dismissedAtIso : null,
+    dismissedReason: typeof row.dismissedReason === 'string' && row.dismissedReason.trim().length > 0 ? row.dismissedReason : null,
+    dismissedBy: row.dismissedBy === 'user' ? 'user' : null,
     params: row.params ?? null,
   }
 }
@@ -370,6 +374,14 @@ export async function getPersistedServerRequests(): Promise<UiPersistedServerReq
   return rows
     .map((row) => normalizePersistedServerRequest(row))
     .filter((row): row is UiPersistedServerRequest => row !== null)
+}
+
+export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+  const normalizedRequestIds = requestIds
+    .filter((value) => Number.isInteger(value))
+    .map((value) => Math.trunc(value))
+  if (normalizedRequestIds.length === 0) return []
+  return dismissPersistedServerRequestsRequest(Array.from(new Set(normalizedRequestIds)))
 }
 
 export async function resumeThread(threadId: string): Promise<void> {

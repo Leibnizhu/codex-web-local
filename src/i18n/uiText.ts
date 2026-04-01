@@ -164,6 +164,22 @@ const UI_TEXT = {
     zh: '检测到未闭合审批记录',
     en: 'Detected unresolved approval records',
   },
+  'composer.branchPersistedRecordsTitle': {
+    zh: '未闭合审批记录',
+    en: 'Unresolved approval records',
+  },
+  'composer.branchPersistedRecordReceivedAt': {
+    zh: ({ time }) => `记录于 ${String(time)}`,
+    en: ({ time }) => `Recorded at ${String(time)}`,
+  },
+  'composer.branchPersistedRecordDismiss': {
+    zh: '忽略阻塞',
+    en: 'Ignore block',
+  },
+  'composer.branchPersistedRecordDismissConfirm': {
+    zh: '这只会忽略本地未闭合审批记录对分支切换的阻塞，不会处理实时审批。是否继续？',
+    en: 'This only ignores the local blocking record for branch switching and will not resolve any live approval. Continue?',
+  },
   'composer.branchDirtyTrackedModified': {
     zh: ({ count }) => `已修改 ${String(count)} 项`,
     en: ({ count }) => `${String(count)} modified`,

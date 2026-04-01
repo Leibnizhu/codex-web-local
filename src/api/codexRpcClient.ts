@@ -264,3 +264,37 @@ export async function fetchPersistedServerRequests(): Promise<unknown[]> {
   const data = record?.data
   return Array.isArray(data) ? data : []
 }
+
+export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+  const response = await fetch('/codex-api/server-requests/persisted/dismiss', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requestIds }),
+  })
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Dismiss persisted server requests failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'server-requests/persisted/dismiss',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data)
+    ? data.filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+    : []
+}

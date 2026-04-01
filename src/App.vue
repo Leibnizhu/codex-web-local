@@ -112,6 +112,7 @@
         </ContentHeader>
 
         <section class="content-body">
+          <p v-if="error" class="content-error">{{ error }}</p>
           <template v-if="isHomeRoute">
             <div class="content-grid">
               <div class="new-thread-empty">
@@ -128,6 +129,7 @@
                 :is-turn-in-progress="false"
                 :thread-branch="selectedWorkspaceBranchState?.currentBranch || selectedThread?.branch || ''"
                 :workspace-branch-state="selectedWorkspaceBranchState"
+                :persisted-server-requests="selectedWorkspacePersistedServerRequests"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -140,6 +142,7 @@
                 @refresh-branches="onRefreshWorkspaceBranches"
                 @switch-branch="onSwitchWorkspaceBranch"
                 @create-branch="onCreateWorkspaceBranch"
+                @dismiss-persisted-request="onDismissPersistedServerRequest"
                 @compact-context="onCompactContext" />
             </div>
           </template>
@@ -238,6 +241,7 @@
                 :selected-chat-mode="selectedChatMode"
                 :thread-branch="selectedWorkspaceBranchState?.currentBranch || selectedThread?.branch || ''"
                 :workspace-branch-state="selectedWorkspaceBranchState"
+                :persisted-server-requests="selectedWorkspacePersistedServerRequests"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -250,6 +254,7 @@
                 @refresh-branches="onRefreshWorkspaceBranches"
                 @switch-branch="onSwitchWorkspaceBranch"
                 @create-branch="onCreateWorkspaceBranch"
+                @dismiss-persisted-request="onDismissPersistedServerRequest"
                 @interrupt="onInterruptTurn"
                 @compact-context="onCompactContext" />
               </div>
@@ -296,6 +301,7 @@ const {
   selectedThread,
   selectedThreadScrollState,
   selectedThreadServerRequests,
+  selectedWorkspacePersistedServerRequests,
   selectedThreadFileChanges,
   selectedQueuedMessages,
   selectedWorkspaceBranchState,
@@ -332,6 +338,7 @@ const {
   setSelectedReasoningEffort,
   setSelectedChatMode,
   respondToPendingServerRequest,
+  dismissPersistedServerRequests,
   renameProject,
   removeProject,
   reorderProject,
@@ -601,6 +608,10 @@ function onUpdateThreadScrollState(payload: { threadId: string; state: ThreadScr
 
 function onRespondServerRequest(payload: { id: number; result?: unknown; error?: { code?: number; message: string } }): void {
   void respondToPendingServerRequest(payload)
+}
+
+function onDismissPersistedServerRequest(requestId: number): void {
+  void dismissPersistedServerRequests([requestId])
 }
 
 function onToggleAutoRefreshTimer(): void {

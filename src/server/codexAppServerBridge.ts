@@ -53,6 +53,9 @@ type PersistedServerRequest = {
   receivedAtIso: string
   resolvedAtIso: string | null
   resolutionKind: string | null
+  dismissedAtIso: string | null
+  dismissedReason: string | null
+  dismissedBy: 'user' | null
 }
 
 const PERSISTED_SERVER_REQUEST_UNRESOLVED_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -592,6 +595,9 @@ class AppServerProcess {
             receivedAtIso,
             resolvedAtIso: typeof record?.resolvedAtIso === 'string' ? record.resolvedAtIso : null,
             resolutionKind: typeof record?.resolutionKind === 'string' ? record.resolutionKind : null,
+            dismissedAtIso: typeof record?.dismissedAtIso === 'string' ? record.dismissedAtIso : null,
+            dismissedReason: typeof record?.dismissedReason === 'string' ? record.dismissedReason : null,
+            dismissedBy: record?.dismissedBy === 'user' ? 'user' : null,
           })
         }
         if (this.prunePersistedServerRequests()) {
@@ -679,7 +685,31 @@ class AppServerProcess {
       receivedAtIso: pendingRequest.receivedAtIso,
       resolvedAtIso: null,
       resolutionKind: null,
+      dismissedAtIso: null,
+      dismissedReason: null,
+      dismissedBy: null,
     }
+  }
+
+  async dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+    await this.ensurePersistedServerRequestsLoaded()
+    const dismissedRequestIds: number[] = []
+    for (const requestId of requestIds) {
+      const current = this.persistedServerRequests.get(requestId)
+      if (!current) continue
+      if (current.resolvedAtIso !== null || current.dismissedAtIso !== null) continue
+      this.persistedServerRequests.set(requestId, {
+        ...current,
+        dismissedAtIso: new Date().toISOString(),
+        dismissedReason: 'user_ignored_branch_block',
+        dismissedBy: 'user',
+      })
+      dismissedRequestIds.push(requestId)
+    }
+    if (dismissedRequestIds.length > 0) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    return dismissedRequestIds
   }
 
   private resolvePendingServerRequest(requestId: number, reply: ServerRequestReply): void {
@@ -807,7 +837,7 @@ class AppServerProcess {
       this.queuePersistedServerRequestsFlush()
     }
     return Array.from(this.persistedServerRequests.values())
-      .filter((request) => request.resolvedAtIso === null)
+      .filter((request) => request.resolvedAtIso === null && request.dismissedAtIso === null)
       .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   }
 
@@ -1025,6 +1055,16 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'GET' && url.pathname === '/codex-api/server-requests/persisted') {
         setJson(res, 200, { data: await appServer.listPersistedServerRequests() })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/server-requests/persisted/dismiss') {
+        const payload = await readJsonBody(req)
+        const body = asRecord(payload)
+        const requestIds = Array.isArray(body?.requestIds)
+          ? body.requestIds.filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+          : []
+        setJson(res, 200, { data: await appServer.dismissPersistedServerRequests(requestIds) })
         return
       }
 

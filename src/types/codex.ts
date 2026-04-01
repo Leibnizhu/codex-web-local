@@ -132,6 +132,9 @@ export type UiPersistedServerRequest = {
   receivedAtIso: string
   resolvedAtIso: string | null
   resolutionKind: string | null
+  dismissedAtIso: string | null
+  dismissedReason: string | null
+  dismissedBy: 'user' | null
   params: unknown
 }
 

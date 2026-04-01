@@ -199,6 +199,36 @@
                   {{ tUi(normalizedLanguage, 'composer.branchDirtyEntriesMore', { count: branchDirtyOverflowCount }) }}
                 </p>
               </div>
+              <div
+                v-if="branchPersistedRecords.length > 0"
+                class="thread-composer-branch-persisted"
+              >
+                <p class="thread-composer-branch-persisted-title">
+                  {{ tUi(normalizedLanguage, 'composer.branchPersistedRecordsTitle') }}
+                </p>
+                <ul class="thread-composer-branch-persisted-list">
+                  <li
+                    v-for="request in branchPersistedRecords"
+                    :key="request.id"
+                    class="thread-composer-branch-persisted-item"
+                  >
+                    <div class="thread-composer-branch-persisted-copy">
+                      <p class="thread-composer-branch-persisted-method">{{ request.method }}</p>
+                      <p class="thread-composer-branch-persisted-meta">
+                        {{ tUi(normalizedLanguage, 'composer.branchPersistedRecordReceivedAt', { time: formatPersistedRequestTime(request.receivedAtIso) }) }}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      class="thread-composer-branch-persisted-dismiss"
+                      :disabled="disabled || isBranchSwitching"
+                      @click="onDismissPersistedRequest(request.id)"
+                    >
+                      {{ tUi(normalizedLanguage, 'composer.branchPersistedRecordDismiss') }}
+                    </button>
+                  </li>
+                </ul>
+              </div>
 
               <p v-if="isBranchLoading" class="thread-composer-branch-menu-empty">
                 {{ tUi(normalizedLanguage, 'composer.branchLoading') }}
@@ -339,6 +369,7 @@ import type {
   ChatMode,
   ComposerSubmitPayload,
   ReasoningEffort,
+  UiPersistedServerRequest,
   UiRateLimitUsage,
   UiThreadContextUsage,
   UiWorkspaceBranchState,
@@ -366,6 +397,7 @@ const props = defineProps<{
   selectedChatMode: ChatMode
   threadBranch?: string
   workspaceBranchState?: UiWorkspaceBranchState | null
+  persistedServerRequests?: UiPersistedServerRequest[]
   contextUsage?: UiThreadContextUsage | null
   rateLimitUsage?: UiRateLimitUsage | null
   isCompactingContext?: boolean
@@ -391,6 +423,7 @@ const emit = defineEmits<{
   'refresh-branches': []
   'switch-branch': [branch: string]
   'create-branch': [branch: string]
+  'dismiss-persisted-request': [requestId: number]
 }>()
 
 const draft = ref('')
@@ -511,6 +544,9 @@ const branchDirtyOverflowCount = computed(() => {
   const total = props.workspaceBranchState?.dirtyEntries?.length ?? 0
   return Math.max(0, total - branchDirtyPreviewPaths.value.length)
 })
+const branchPersistedRecords = computed<UiPersistedServerRequest[]>(() =>
+  (props.persistedServerRequests ?? []).slice(0, 3),
+)
 const availableBranches = computed(() => {
   const branches = props.workspaceBranchState?.branches ?? []
   const current = currentBranchName.value
@@ -529,6 +565,17 @@ function getBranchBlockedReasonLabel(reason: WorkspaceBranchBlockReason): string
   return tUi(normalizedLanguage.value, 'composer.branchBlockedQueued')
 }
 const branchBlockedSummary = computed(() => branchBlockedReasons.value.map(getBranchBlockedReasonLabel).join(' · '))
+function formatPersistedRequestTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const locale = normalizedLanguage.value === 'zh' ? 'zh-CN' : 'en-US'
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
 function formatCompactWindowDuration(minutes: number | null): string {
   if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
     return ''
@@ -878,6 +925,15 @@ function onCreateBranch(): void {
   closeBranchMenu()
 }
 
+function onDismissPersistedRequest(requestId: number): void {
+  if (!Number.isInteger(requestId)) return
+  const confirmed = window.confirm(
+    tUi(normalizedLanguage.value, 'composer.branchPersistedRecordDismissConfirm'),
+  )
+  if (!confirmed) return
+  emit('dismiss-persisted-request', requestId)
+}
+
 watch(
   () => props.activeThreadId,
   () => {
@@ -1106,6 +1162,38 @@ watch(
 
 .thread-composer-branch-dirty-preview-more {
   @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+}
+
+.thread-composer-branch-persisted {
+  @apply mt-2 rounded-lg border border-sky-200 bg-sky-50 px-2 py-2;
+}
+
+.thread-composer-branch-persisted-title {
+  @apply m-0 text-[10px] font-medium text-sky-900;
+}
+
+.thread-composer-branch-persisted-list {
+  @apply mt-1 list-none p-0 m-0 flex flex-col gap-1.5;
+}
+
+.thread-composer-branch-persisted-item {
+  @apply flex items-start justify-between gap-2 rounded-md bg-white/70 px-2 py-1.5;
+}
+
+.thread-composer-branch-persisted-copy {
+  @apply min-w-0 flex-1;
+}
+
+.thread-composer-branch-persisted-method {
+  @apply m-0 text-[10px] font-medium leading-4 text-sky-950 break-all;
+}
+
+.thread-composer-branch-persisted-meta {
+  @apply mt-0.5 mb-0 text-[10px] leading-4 text-sky-700;
+}
+
+.thread-composer-branch-persisted-dismiss {
+  @apply shrink-0 rounded-md border border-sky-200 bg-white px-2 py-1 text-[10px] font-medium text-sky-800 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50;
 }
 
 .thread-composer-branch-menu-empty {
