@@ -224,13 +224,21 @@ const UI_TEXT = {
     zh: '自动选择',
     en: 'Auto',
   },
+  'diffPanel.baseBranchConfigured': {
+    zh: ({ branch }) => `当前配置基线：${String(branch)}`,
+    en: ({ branch }) => `Configured base: ${String(branch)}`,
+  },
+  'diffPanel.baseBranchInferred': {
+    zh: ({ branch }) => `自动推导基线：${String(branch)}`,
+    en: ({ branch }) => `Inferred base: ${String(branch)}`,
+  },
   'diffPanel.empty.noChanges': {
     zh: '当前模式下没有可显示的差异。',
     en: 'No differences are available for this mode.',
   },
   'diffPanel.empty.branchBaseMissing': {
-    zh: '未找到 main 或 master，暂时无法计算全部分支更改。',
-    en: 'Neither main nor master was found, so branch changes cannot be computed yet.',
+    zh: '未能从当前仓库的本地 Git 信息推导比较基线，暂时无法计算全部分支更改。',
+    en: 'A comparison base could not be inferred from local Git metadata, so branch changes cannot be computed yet.',
   },
   'diffPanel.empty.warning': {
     zh: '当前模式无法稳定生成差异，请查看提示信息。',

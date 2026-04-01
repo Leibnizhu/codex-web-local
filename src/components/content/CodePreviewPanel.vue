@@ -50,6 +50,9 @@
             </option>
           </select>
         </div>
+        <p v-if="baseBranchResolutionText" class="workspace-diff-base-branch-resolution">
+          {{ baseBranchResolutionText }}
+        </p>
       </div>
       <p v-if="workspaceSnapshot.warning" class="workspace-diff-warning">{{ workspaceSnapshot.warning }}</p>
       <section v-if="isGitStatusMode" class="workspace-status-panel">
@@ -558,6 +561,16 @@ const workspaceModeRefs = computed(() => {
   return `${baseRef} -> ${targetRef}`
 })
 
+const baseBranchResolutionText = computed(() => {
+  if (props.panel.kind !== 'workspace' || workspaceSnapshot.value.mode !== 'branch') return ''
+  const resolvedBaseRef = workspaceSnapshot.value.baseRef?.trim() ?? ''
+  if (!resolvedBaseRef) return ''
+  if (selectedBaseBranchValue.value) {
+    return tUi(normalizedLanguage.value, 'diffPanel.baseBranchConfigured', { branch: resolvedBaseRef })
+  }
+  return tUi(normalizedLanguage.value, 'diffPanel.baseBranchInferred', { branch: resolvedBaseRef })
+})
+
 const workspaceEmptyMessage = computed(() => {
   if (props.panel.kind !== 'workspace') return ''
   if (workspaceSnapshot.value.warning) {
@@ -753,6 +766,10 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 
 .workspace-diff-base-branch-select {
   @apply min-w-0 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] leading-4 text-zinc-700;
+}
+
+.workspace-diff-base-branch-resolution {
+  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
 }
 
 .workspace-diff-warning {

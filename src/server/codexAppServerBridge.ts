@@ -370,6 +370,92 @@ async function collectWorkspaceChangesForDiffArgs(
   return files.sort((first, second) => first.path.localeCompare(second.path))
 }
 
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runGit(['rev-parse', '--verify', `${ref}^{commit}`], cwd)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function resolveUpstreamRemote(cwd: string): Promise<string | null> {
+  try {
+    const upstream = (await runGit(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], cwd)).trim()
+    if (!upstream) return null
+    const [remote] = upstream.split('/')
+    return remote?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+async function resolveRemoteHeadBranch(
+  cwd: string,
+  remote: string,
+): Promise<{ remote: string; ref: string; shortName: string } | null> {
+  const normalizedRemote = remote.trim()
+  if (!normalizedRemote) return null
+  try {
+    const symbolicRef = (
+      await runGit(['symbolic-ref', '--quiet', '--short', `refs/remotes/${normalizedRemote}/HEAD`], cwd)
+    ).trim()
+    if (!symbolicRef || symbolicRef === `${normalizedRemote}/HEAD`) return null
+    const shortName = symbolicRef.startsWith(`${normalizedRemote}/`)
+      ? symbolicRef.slice(normalizedRemote.length + 1)
+      : symbolicRef
+    return {
+      remote: normalizedRemote,
+      ref: symbolicRef,
+      shortName,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function listRemoteHeadBranches(
+  cwd: string,
+): Promise<Array<{ remote: string; ref: string; shortName: string }>> {
+  try {
+    const output = await runGit(['for-each-ref', 'refs/remotes', '--format=%(refname:short)'], cwd)
+    const remotes = new Set<string>()
+    for (const line of output.split('\n')) {
+      const normalized = line.trim()
+      if (!normalized.endsWith('/HEAD')) continue
+      const remote = normalized.slice(0, -'/HEAD'.length).trim()
+      if (remote) remotes.add(remote)
+    }
+
+    const resolved = await Promise.all(
+      Array.from(remotes)
+        .sort((first, second) => first.localeCompare(second))
+        .map((remote) => resolveRemoteHeadBranch(cwd, remote)),
+    )
+
+    const deduped = new Map<string, { remote: string; ref: string; shortName: string }>()
+    for (const candidate of resolved) {
+      if (!candidate) continue
+      if (!deduped.has(candidate.ref)) {
+        deduped.set(candidate.ref, candidate)
+      }
+    }
+    return Array.from(deduped.values())
+  } catch {
+    return []
+  }
+}
+
+function withConfiguredBaseBranchWarning(
+  configuredBaseBranch: string,
+  resolvedBaseBranch: string,
+  note: string | null = null,
+): string {
+  const prefix = `Configured base branch ${configuredBaseBranch} not found`
+  if (note) return `${prefix}; ${note}`
+  return `${prefix}; using ${resolvedBaseBranch}`
+}
+
 async function resolveWorkspaceDiffBaseBranch(
   cwd: string,
   preferredBaseBranch: string | null,
@@ -377,29 +463,64 @@ async function resolveWorkspaceDiffBaseBranch(
   const targetCwd = resolve(cwd)
   const normalizedPreferred = preferredBaseBranch?.trim() ?? ''
   if (normalizedPreferred) {
-    try {
-      await runGit(['rev-parse', '--verify', normalizedPreferred], targetCwd)
+    if (await refExists(targetCwd, normalizedPreferred)) {
       return { baseBranch: normalizedPreferred, warning: null }
-    } catch {
-      // Fall through to auto-detection and surface a warning only if we can recover.
     }
   }
-  for (const candidate of ['main', 'master']) {
-    try {
-      await runGit(['rev-parse', '--verify', candidate], targetCwd)
+
+  const upstreamRemote = await resolveUpstreamRemote(targetCwd)
+  if (upstreamRemote) {
+    const upstreamRemoteHead = await resolveRemoteHeadBranch(targetCwd, upstreamRemote)
+    if (upstreamRemoteHead) {
+      return {
+        baseBranch: upstreamRemoteHead.ref,
+        warning: normalizedPreferred
+          ? withConfiguredBaseBranchWarning(normalizedPreferred, upstreamRemoteHead.ref)
+          : null,
+      }
+    }
+  }
+
+  const originRemoteHead = await resolveRemoteHeadBranch(targetCwd, 'origin')
+  if (originRemoteHead) {
+    return {
+      baseBranch: originRemoteHead.ref,
+      warning: normalizedPreferred
+        ? withConfiguredBaseBranchWarning(normalizedPreferred, originRemoteHead.ref)
+        : null,
+    }
+  }
+
+  const remoteHeads = await listRemoteHeadBranches(targetCwd)
+  if (remoteHeads.length > 0) {
+    const chosenRemoteHead = remoteHeads[0]
+    const fallbackWarning = remoteHeads.length > 1
+      ? `Multiple local remote HEADs found; using ${chosenRemoteHead.ref}`
+      : `Using local remote HEAD ${chosenRemoteHead.ref}`
+    return {
+      baseBranch: chosenRemoteHead.ref,
+      warning: normalizedPreferred
+        ? withConfiguredBaseBranchWarning(normalizedPreferred, chosenRemoteHead.ref, fallbackWarning)
+        : fallbackWarning,
+    }
+  }
+
+  for (const candidate of ['main', 'master', 'develop', 'dev', 'trunk']) {
+    if (await refExists(targetCwd, candidate)) {
       return {
         baseBranch: candidate,
-        warning: normalizedPreferred ? `Configured base branch ${normalizedPreferred} not found; using ${candidate}` : null,
+        warning: normalizedPreferred
+          ? withConfiguredBaseBranchWarning(normalizedPreferred, candidate, `using local branch ${candidate}`)
+          : `Remote HEAD not found; using local branch ${candidate}`,
       }
-    } catch {
-      continue
     }
   }
+
   return {
     baseBranch: null,
     warning: normalizedPreferred
-      ? `Configured base branch ${normalizedPreferred} not found`
-      : 'Base branch main/master not found',
+      ? `Configured base branch ${normalizedPreferred} not found; unable to infer a base branch from local Git metadata`
+      : 'Unable to infer a base branch from local Git metadata',
   }
 }
 
@@ -516,7 +637,7 @@ async function collectWorkspaceDiffSnapshot(
     mode,
     cwd: targetCwd,
     label: `Branch changes vs ${baseBranch}`,
-    baseRef: mergeBase || baseBranch,
+    baseRef: baseBranch,
     targetRef: 'HEAD',
     warning,
     files,
