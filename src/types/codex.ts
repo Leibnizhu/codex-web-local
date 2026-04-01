@@ -287,6 +287,11 @@ export type WorkspaceApprovalState = {
   persisted: UiPersistedServerRequest[]
 }
 
+export type SessionApprovalState = {
+  globalLive: UiServerRequest[]
+  globalPersisted: UiPersistedServerRequest[]
+}
+
 export type WorkspaceModel = {
   cwd: string
   branch: WorkspaceBranchState

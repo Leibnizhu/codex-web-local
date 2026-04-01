@@ -131,6 +131,8 @@
                 :workspace-model="selectedWorkspaceModel"
                 :workspace-branch-state="selectedWorkspaceBranchState"
                 :persisted-server-requests="selectedWorkspacePersistedServerRequests"
+                :global-live-request-count="globalLiveServerRequests.length"
+                :global-persisted-request-count="globalPersistedServerRequests.length"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -216,6 +218,8 @@
                 :workspace-model="selectedWorkspaceModel"
                 :workspace-branch-state="selectedWorkspaceBranchState"
                 :persisted-server-requests="selectedWorkspacePersistedServerRequests"
+                :global-live-request-count="globalLiveServerRequests.length"
+                :global-persisted-request-count="globalPersistedServerRequests.length"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -276,6 +280,8 @@ const {
   selectedThreadScrollState,
   selectedThreadServerRequests,
   selectedWorkspacePersistedServerRequests,
+  globalLiveServerRequests,
+  globalPersistedServerRequests,
   selectedWorkspaceModel,
   selectedWorkspaceDiffTotals,
   selectedThreadFileChanges,
