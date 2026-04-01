@@ -173,6 +173,24 @@ export type UiTurnFileChanges = {
   totalDeletions: number
 }
 
+export type UiWorkspaceDiffMode =
+  | 'unstaged'
+  | 'staged'
+  | 'branch'
+  | 'lastCommit'
+
+export type UiWorkspaceDiffSnapshot = {
+  mode: UiWorkspaceDiffMode
+  cwd: string
+  label: string
+  baseRef: string | null
+  targetRef: string | null
+  warning: string | null
+  files: UiChangedFile[]
+  totalAdditions: number
+  totalDeletions: number
+}
+
 export type WorkspaceBranchBlockReason =
   | 'not_repo'
   | 'workspace_dirty'

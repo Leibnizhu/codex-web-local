@@ -133,6 +133,24 @@ type WorkspaceFileChange = {
   diff: string
 }
 
+type WorkspaceDiffMode =
+  | 'unstaged'
+  | 'staged'
+  | 'branch'
+  | 'lastCommit'
+
+type WorkspaceDiffSnapshot = {
+  mode: WorkspaceDiffMode
+  cwd: string
+  label: string
+  baseRef: string | null
+  targetRef: string | null
+  warning: string | null
+  files: WorkspaceFileChange[]
+  totalAdditions: number
+  totalDeletions: number
+}
+
 type WorkspaceDirtyKind =
   | 'modified'
   | 'added'
@@ -193,6 +211,14 @@ function parseNumstat(output: string): Array<{ path: string; additions: number; 
     })
   }
   return rows
+}
+
+function normalizeWorkspaceDiffMode(value: string): WorkspaceDiffMode | null {
+  const normalized = value.trim()
+  if (normalized === 'unstaged' || normalized === 'staged' || normalized === 'branch' || normalized === 'lastCommit') {
+    return normalized
+  }
+  return null
 }
 
 function isConflictStatus(x: string, y: string): boolean {
@@ -310,6 +336,146 @@ async function collectWorkspaceChanges(cwd: string): Promise<WorkspaceFileChange
   }
 
   return Array.from(merged.values()).sort((first, second) => first.path.localeCompare(second.path))
+}
+
+async function collectWorkspaceChangesForDiffArgs(
+  cwd: string,
+  numstatArgs: string[],
+  diffArgsForPath: (path: string) => string[],
+): Promise<WorkspaceFileChange[]> {
+  const targetCwd = resolve(cwd)
+  await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
+
+  const numstatOutput = await runGit(numstatArgs, targetCwd)
+  const rows = parseNumstat(numstatOutput)
+  const files: WorkspaceFileChange[] = []
+
+  for (const row of rows) {
+    const diff = await runGit(diffArgsForPath(row.path), targetCwd).catch(() => '')
+    files.push({
+      path: row.path,
+      additions: row.additions,
+      deletions: row.deletions,
+      diff: diff.trimEnd(),
+    })
+  }
+
+  return files.sort((first, second) => first.path.localeCompare(second.path))
+}
+
+async function resolveWorkspaceDiffBaseBranch(cwd: string): Promise<string | null> {
+  const targetCwd = resolve(cwd)
+  for (const candidate of ['main', 'master']) {
+    try {
+      await runGit(['rev-parse', '--verify', candidate], targetCwd)
+      return candidate
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function summarizeWorkspaceFileChanges(files: WorkspaceFileChange[]): Pick<WorkspaceDiffSnapshot, 'totalAdditions' | 'totalDeletions'> {
+  return {
+    totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
+    totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0),
+  }
+}
+
+async function collectWorkspaceDiffSnapshot(cwd: string, mode: WorkspaceDiffMode): Promise<WorkspaceDiffSnapshot> {
+  const targetCwd = resolve(cwd)
+  await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
+
+  if (mode === 'unstaged') {
+    const files = await collectWorkspaceChangesForDiffArgs(
+      targetCwd,
+      ['diff', '--numstat'],
+      (path) => ['diff', '--', path],
+    )
+    const totals = summarizeWorkspaceFileChanges(files)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Unstaged changes',
+      baseRef: null,
+      targetRef: 'WORKTREE',
+      warning: null,
+      files,
+      ...totals,
+    }
+  }
+
+  if (mode === 'staged') {
+    const files = await collectWorkspaceChangesForDiffArgs(
+      targetCwd,
+      ['diff', '--cached', '--numstat'],
+      (path) => ['diff', '--cached', '--', path],
+    )
+    const totals = summarizeWorkspaceFileChanges(files)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Staged changes',
+      baseRef: 'INDEX',
+      targetRef: 'HEAD',
+      warning: null,
+      files,
+      ...totals,
+    }
+  }
+
+  if (mode === 'lastCommit') {
+    const files = await collectWorkspaceChangesForDiffArgs(
+      targetCwd,
+      ['show', '--format=', '--numstat', 'HEAD'],
+      (path) => ['show', '--format=', 'HEAD', '--', path],
+    )
+    const totals = summarizeWorkspaceFileChanges(files)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Last commit',
+      baseRef: 'HEAD~1',
+      targetRef: 'HEAD',
+      warning: null,
+      files,
+      ...totals,
+    }
+  }
+
+  const baseBranch = await resolveWorkspaceDiffBaseBranch(targetCwd)
+  if (!baseBranch) {
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Branch changes',
+      baseRef: null,
+      targetRef: 'HEAD',
+      warning: 'Base branch main/master not found',
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+    }
+  }
+
+  const mergeBase = (await runGit(['merge-base', baseBranch, 'HEAD'], targetCwd)).trim()
+  const files = await collectWorkspaceChangesForDiffArgs(
+    targetCwd,
+    ['diff', '--numstat', mergeBase, 'HEAD'],
+    (path) => ['diff', mergeBase, 'HEAD', '--', path],
+  )
+  const totals = summarizeWorkspaceFileChanges(files)
+  return {
+    mode,
+    cwd: targetCwd,
+    label: `Branch changes vs ${baseBranch}`,
+    baseRef: mergeBase || baseBranch,
+    targetRef: 'HEAD',
+    warning: null,
+    files,
+    ...totals,
+  }
 }
 
 async function collectWorkspaceUnifiedDiff(cwd: string): Promise<string> {
@@ -1155,6 +1321,38 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         } catch (error) {
           const message = getErrorMessage(error, 'Failed to collect workspace diff')
           setJson(res, 200, { diff: '', warning: message })
+          return
+        }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/workspace-diff-mode') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        const mode = normalizeWorkspaceDiffMode(url.searchParams.get('mode') ?? '')
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+        if (!mode) {
+          setJson(res, 400, { error: 'Invalid query parameter: mode' })
+          return
+        }
+        try {
+          const snapshot = await collectWorkspaceDiffSnapshot(cwd, mode)
+          setJson(res, 200, snapshot)
+          return
+        } catch (error) {
+          const message = getErrorMessage(error, 'Failed to collect workspace diff mode')
+          setJson(res, 200, {
+            mode,
+            cwd: resolve(cwd),
+            label: '',
+            baseRef: null,
+            targetRef: null,
+            warning: message,
+            files: [],
+            totalAdditions: 0,
+            totalDeletions: 0,
+          } satisfies WorkspaceDiffSnapshot)
           return
         }
       }

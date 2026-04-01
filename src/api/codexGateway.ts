@@ -4,6 +4,7 @@ import {
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
   fetchPendingServerRequests,
+  fetchWorkspaceDiffMode as fetchWorkspaceDiffModeRequest,
   rpcCall,
   respondServerRequest,
   subscribeRpcNotifications,
@@ -37,6 +38,8 @@ import type {
   UiWorkspaceDirtySummary,
   UiTurnFileChanges,
   UiWorkspaceBranchList,
+  UiWorkspaceDiffMode,
+  UiWorkspaceDiffSnapshot,
   UiWorkspaceGitStatus,
   UserInput,
 } from '../types/codex'
@@ -244,6 +247,55 @@ function normalizePersistedServerRequest(value: unknown): UiPersistedServerReque
     dismissedReason: typeof row.dismissedReason === 'string' && row.dismissedReason.trim().length > 0 ? row.dismissedReason : null,
     dismissedBy: row.dismissedBy === 'user' ? 'user' : null,
     params: row.params ?? null,
+  }
+}
+
+function normalizeWorkspaceDiffMode(value: unknown): UiWorkspaceDiffMode {
+  const allowed: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit']
+  return typeof value === 'string' && allowed.includes(value as UiWorkspaceDiffMode)
+    ? (value as UiWorkspaceDiffMode)
+    : 'unstaged'
+}
+
+function normalizeChangedFiles(value: unknown): UiWorkspaceDiffSnapshot['files'] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((file) => {
+      if (!file || typeof file !== 'object' || Array.isArray(file)) return null
+      const row = file as Partial<UiWorkspaceDiffSnapshot['files'][number]>
+      const path = typeof row.path === 'string' ? row.path.trim() : ''
+      if (!path) return null
+      return {
+        path,
+        additions: typeof row.additions === 'number' && Number.isFinite(row.additions) ? Math.max(0, Math.trunc(row.additions)) : 0,
+        deletions: typeof row.deletions === 'number' && Number.isFinite(row.deletions) ? Math.max(0, Math.trunc(row.deletions)) : 0,
+        diff: typeof row.diff === 'string' ? row.diff : '',
+      }
+    })
+    .filter((file): file is UiWorkspaceDiffSnapshot['files'][number] => file !== null)
+}
+
+function normalizeWorkspaceDiffSnapshot(value: unknown, fallbackCwd: string, fallbackMode: UiWorkspaceDiffMode): UiWorkspaceDiffSnapshot {
+  const row = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Partial<UiWorkspaceDiffSnapshot>)
+    : {}
+  const files = normalizeChangedFiles(row.files)
+  const totalAdditions = typeof row.totalAdditions === 'number' && Number.isFinite(row.totalAdditions)
+    ? Math.max(0, Math.trunc(row.totalAdditions))
+    : files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = typeof row.totalDeletions === 'number' && Number.isFinite(row.totalDeletions)
+    ? Math.max(0, Math.trunc(row.totalDeletions))
+    : files.reduce((sum, file) => sum + file.deletions, 0)
+  return {
+    mode: normalizeWorkspaceDiffMode(row.mode ?? fallbackMode),
+    cwd: typeof row.cwd === 'string' && row.cwd.trim().length > 0 ? row.cwd.trim() : fallbackCwd,
+    label: typeof row.label === 'string' ? row.label : '',
+    baseRef: typeof row.baseRef === 'string' && row.baseRef.trim().length > 0 ? row.baseRef.trim() : null,
+    targetRef: typeof row.targetRef === 'string' && row.targetRef.trim().length > 0 ? row.targetRef.trim() : null,
+    warning: typeof row.warning === 'string' && row.warning.trim().length > 0 ? row.warning : null,
+    files,
+    totalAdditions,
+    totalDeletions,
   }
 }
 
@@ -826,6 +878,17 @@ export async function fetchWorkspaceFullDiff(cwd: string): Promise<string> {
 
   const record = payload as Record<string, unknown> | null
   return typeof record?.diff === 'string' ? record.diff : ''
+}
+
+export async function fetchWorkspaceDiffSnapshot(
+  cwd: string,
+  mode: UiWorkspaceDiffMode,
+): Promise<UiWorkspaceDiffSnapshot | null> {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return null
+  const normalizedMode = normalizeWorkspaceDiffMode(mode)
+  const payload = await fetchWorkspaceDiffModeRequest(normalizedCwd, normalizedMode)
+  return normalizeWorkspaceDiffSnapshot(payload, normalizedCwd, normalizedMode)
 }
 
 // `thread/loaded/list` returns sessions loaded in memory, not currently running turns.

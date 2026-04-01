@@ -180,6 +180,58 @@ const UI_TEXT = {
     zh: '这只会忽略本地未闭合审批记录对分支切换的阻塞，不会处理实时审批。是否继续？',
     en: 'This only ignores the local blocking record for branch switching and will not resolve any live approval. Continue?',
   },
+  'diffPanel.title': {
+    zh: '差异面板',
+    en: 'Diff panel',
+  },
+  'diffPanel.filesUnit': {
+    zh: '个文件',
+    en: 'files',
+  },
+  'diffPanel.mode.unstaged': {
+    zh: '未暂存',
+    en: 'Unstaged',
+  },
+  'diffPanel.mode.staged': {
+    zh: '已暂存',
+    en: 'Staged',
+  },
+  'diffPanel.mode.branch': {
+    zh: '全部分支更改',
+    en: 'Branch changes',
+  },
+  'diffPanel.mode.lastCommit': {
+    zh: '上一轮更改',
+    en: 'Last commit',
+  },
+  'diffPanel.desc.unstaged': {
+    zh: '显示当前工作区尚未暂存的内容差异。',
+    en: 'Shows unstaged content differences in the current workspace.',
+  },
+  'diffPanel.desc.staged': {
+    zh: '显示当前工作区已暂存但尚未提交的内容差异。',
+    en: 'Shows staged but uncommitted content differences in the current workspace.',
+  },
+  'diffPanel.desc.branch': {
+    zh: '显示当前分支相对基线分支的累计改动。',
+    en: 'Shows cumulative changes on the current branch relative to the base branch.',
+  },
+  'diffPanel.desc.lastCommit': {
+    zh: '显示最近一次提交的内容差异。',
+    en: 'Shows the content differences from the most recent commit.',
+  },
+  'diffPanel.empty.noChanges': {
+    zh: '当前模式下没有可显示的差异。',
+    en: 'No differences are available for this mode.',
+  },
+  'diffPanel.empty.branchBaseMissing': {
+    zh: '未找到 main 或 master，暂时无法计算全部分支更改。',
+    en: 'Neither main nor master was found, so branch changes cannot be computed yet.',
+  },
+  'diffPanel.empty.warning': {
+    zh: '当前模式无法稳定生成差异，请查看提示信息。',
+    en: 'The selected mode could not produce a stable diff. See the warning for details.',
+  },
   'composer.branchDirtyTrackedModified': {
     zh: ({ count }) => `已修改 ${String(count)} 项`,
     en: ({ count }) => `${String(count)} modified`,

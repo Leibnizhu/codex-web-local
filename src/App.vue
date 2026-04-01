@@ -168,7 +168,9 @@
                 :panel="previewPanel"
                 :cwd="selectedThread?.cwd ?? ''"
                 :matched-file-diff="previewMatchedDiff"
+                :ui-language="uiLanguage"
                 :close-label="t('app.closeCodePreview')"
+                @change-workspace-mode="onChangeWorkspaceDiffMode"
                 @close="onCloseFilePreview"
               />
             </div>
@@ -282,8 +284,8 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
-import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges } from './types/codex'
-import { fetchFilePreview, fetchWorkspaceChanges } from './api/codexGateway'
+import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot } from './types/codex'
+import { fetchFilePreview, fetchWorkspaceChanges, fetchWorkspaceDiffSnapshot } from './api/codexGateway'
 import {
   normalizePathSeparators,
   getBasename,
@@ -364,6 +366,7 @@ const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
 const previewPanel = ref<PreviewPanelState | null>(null)
 const workspaceDiffTotals = ref({ additions: 0, deletions: 0 })
 const isCreatingThreadFromHome = ref(false)
+const currentWorkspaceDiffMode = ref<UiWorkspaceDiffMode>('unstaged')
 
 const routeThreadId = computed(() => {
   const rawThreadId = route.params.threadId
@@ -783,27 +786,61 @@ async function onOpenWorkspaceDiff(): Promise<void> {
 
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   if (!cwd) return
+  const preferredMode = currentWorkspaceDiffMode.value
+  if (preferredMode !== 'unstaged') {
+    await openWorkspaceDiffPanel(cwd, preferredMode)
+    return
+  }
+
+  const unstagedSnapshot = await fetchWorkspaceDiffSnapshot(cwd, 'unstaged')
+  if ((unstagedSnapshot?.files.length ?? 0) > 0 || (unstagedSnapshot?.warning ?? null)) {
+    await openWorkspaceDiffPanel(cwd, 'unstaged')
+    return
+  }
+
+  const stagedSnapshot = await fetchWorkspaceDiffSnapshot(cwd, 'staged')
+  if ((stagedSnapshot?.files.length ?? 0) > 0) {
+    await openWorkspaceDiffPanel(cwd, 'staged')
+    return
+  }
+
+  await openWorkspaceDiffPanel(cwd, 'unstaged')
+}
+
+async function openWorkspaceDiffPanel(cwd: string, mode: UiWorkspaceDiffMode): Promise<void> {
   try {
-    const changes = await fetchWorkspaceChanges(cwd)
-    const normalizedChanges: UiTurnFileChanges = changes ?? {
-      turnId: '__workspace__',
+    const snapshot = await fetchWorkspaceDiffSnapshot(cwd, mode)
+    const normalizedSnapshot: UiWorkspaceDiffSnapshot = snapshot ?? {
+      mode,
+      cwd,
+      label: '',
+      baseRef: null,
+      targetRef: null,
+      warning: null,
       files: [],
       totalAdditions: 0,
       totalDeletions: 0,
     }
     const expandedPaths: Record<string, boolean> = {}
-    if (normalizedChanges.files.length > 0) {
-      expandedPaths[normalizedChanges.files[0].path] = true
+    if (normalizedSnapshot.files.length > 0) {
+      expandedPaths[normalizedSnapshot.files[0].path] = true
     }
+    currentWorkspaceDiffMode.value = normalizedSnapshot.mode
     previewPanel.value = {
       kind: 'workspace',
       cwd,
-      changes: normalizedChanges,
+      snapshot: normalizedSnapshot,
       expandedPaths,
     }
   } catch {
     previewPanel.value = null
   }
+}
+
+async function onChangeWorkspaceDiffMode(mode: UiWorkspaceDiffMode): Promise<void> {
+  const cwd = selectedThread.value?.cwd?.trim() ?? ''
+  if (!cwd) return
+  await openWorkspaceDiffPanel(cwd, mode)
 }
 
 

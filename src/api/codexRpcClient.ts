@@ -265,6 +265,34 @@ export async function fetchPersistedServerRequests(): Promise<unknown[]> {
   return Array.isArray(data) ? data : []
 }
 
+export async function fetchWorkspaceDiffMode(cwd: string, mode: string): Promise<unknown> {
+  const query = new URLSearchParams({
+    cwd,
+    mode,
+  })
+  const response = await fetch(`/codex-api/workspace-diff-mode?${query.toString()}`)
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Workspace diff mode failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'workspace-diff-mode',
+        status: response.status,
+      },
+    )
+  }
+
+  return payload
+}
+
 export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
   const response = await fetch('/codex-api/server-requests/persisted/dismiss', {
     method: 'POST',

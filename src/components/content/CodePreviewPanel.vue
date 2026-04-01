@@ -15,8 +15,28 @@
       </button>
     </header>
     <section v-if="panel.kind === 'workspace'" class="workspace-diff-panel">
+      <div class="workspace-diff-mode-tabs" role="tablist" aria-label="Workspace diff modes">
+        <button
+          v-for="mode in workspaceDiffModes"
+          :key="mode"
+          type="button"
+          class="workspace-diff-mode-tab"
+          :class="{ 'is-active': panel.snapshot.mode === mode }"
+          @click="emit('change-workspace-mode', mode)"
+        >
+          {{ getWorkspaceModeLabel(mode) }}
+        </button>
+      </div>
+      <div class="workspace-diff-mode-meta">
+        <p class="workspace-diff-mode-description">{{ workspaceModeDescription }}</p>
+        <p v-if="workspaceModeRefs" class="workspace-diff-mode-refs">{{ workspaceModeRefs }}</p>
+      </div>
+      <p v-if="panel.snapshot.warning" class="workspace-diff-warning">{{ panel.snapshot.warning }}</p>
+      <p v-if="panel.snapshot.files.length === 0" class="workspace-diff-empty">
+        {{ workspaceEmptyMessage }}
+      </p>
       <ul class="workspace-diff-list">
-        <li v-for="change in panel.changes.files" :key="`workspace:${change.path}`" class="workspace-diff-item">
+        <li v-for="change in panel.snapshot.files" :key="`workspace:${panel.snapshot.mode}:${change.path}`" class="workspace-diff-item">
           <button
             type="button"
             class="workspace-diff-item-button"
@@ -82,17 +102,18 @@
 
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
-import type { UiChangedFile, UiTurnFileChanges } from '../../types/codex'
+import type { UiChangedFile, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot } from '../../types/codex'
 import type { FilePreviewPayload } from '../../api/codexGateway'
 import { formatDisplayPath } from '../../utils/pathUtils'
 import IconTablerX from '../icons/IconTablerX.vue'
+import { tUi, type UiLanguage } from '../../i18n/uiText'
 import hljs from 'highlight.js/lib/common'
 
 // ─── 类型 ────────────────────────────────────────────────────
 export type PreviewPanelState =
   | { kind: 'file'; payload: FilePreviewPayload }
   | { kind: 'diff'; path: string; diff: string; additions: number; deletions: number }
-  | { kind: 'workspace'; cwd: string; changes: UiTurnFileChanges; expandedPaths: Record<string, boolean> }
+  | { kind: 'workspace'; cwd: string; snapshot: UiWorkspaceDiffSnapshot; expandedPaths: Record<string, boolean> }
 
 type RenderableDiffLine = {
   kind: 'add' | 'del' | 'ctx'
@@ -113,12 +134,17 @@ const props = defineProps<{
   panel: PreviewPanelState
   cwd: string
   matchedFileDiff: UiChangedFile | null
+  uiLanguage?: UiLanguage
   closeLabel: string
 }>()
 
 const emit = defineEmits<{
   close: []
+  'change-workspace-mode': [mode: UiWorkspaceDiffMode]
 }>()
+
+const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
+const workspaceDiffModes: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit']
 
 // ─── Workspace diff 展开状态 ─────────────────────────────────
 const localExpandedPaths = reactive<Record<string, boolean>>({})
@@ -335,20 +361,57 @@ function buildRenderableDiffLines(diff: string): RenderableDiffLine[] {
 
 // ─── Computed ────────────────────────────────────────────────
 const panelTitle = computed(() => {
-  if (props.panel.kind === 'workspace') return '完整 Diff'
+  if (props.panel.kind === 'workspace') return tUi(normalizedLanguage.value, 'diffPanel.title')
   if (props.panel.kind === 'diff') return `${formatDisplayPath(props.panel.path, props.cwd)} (diff)`
   return formatDisplayPath(props.panel.payload.path, props.cwd)
 })
 
 const panelSubtitle = computed(() => {
   if (props.panel.kind === 'workspace') {
-    return `${props.panel.changes.files.length} 个文件 +${props.panel.changes.totalAdditions} -${props.panel.changes.totalDeletions}`
+    return `${props.panel.snapshot.files.length} ${tUi(normalizedLanguage.value, 'diffPanel.filesUnit')} +${props.panel.snapshot.totalAdditions} -${props.panel.snapshot.totalDeletions}`
   }
   if (props.panel.kind === 'diff') {
     if (props.panel.additions === 0 && props.panel.deletions === 0) return ''
     return `+${props.panel.additions} -${props.panel.deletions}`
   }
   return props.panel.payload.line ? `Line ${props.panel.payload.line}` : ''
+})
+
+function getWorkspaceModeLabel(mode: UiWorkspaceDiffMode): string {
+  if (mode === 'unstaged') return tUi(normalizedLanguage.value, 'diffPanel.mode.unstaged')
+  if (mode === 'staged') return tUi(normalizedLanguage.value, 'diffPanel.mode.staged')
+  if (mode === 'branch') return tUi(normalizedLanguage.value, 'diffPanel.mode.branch')
+  return tUi(normalizedLanguage.value, 'diffPanel.mode.lastCommit')
+}
+
+const workspaceModeDescription = computed(() => {
+  if (props.panel.kind !== 'workspace') return ''
+  const mode = props.panel.snapshot.mode
+  if (mode === 'unstaged') return tUi(normalizedLanguage.value, 'diffPanel.desc.unstaged')
+  if (mode === 'staged') return tUi(normalizedLanguage.value, 'diffPanel.desc.staged')
+  if (mode === 'branch') return tUi(normalizedLanguage.value, 'diffPanel.desc.branch')
+  return tUi(normalizedLanguage.value, 'diffPanel.desc.lastCommit')
+})
+
+const workspaceModeRefs = computed(() => {
+  if (props.panel.kind !== 'workspace') return ''
+  const baseRef = props.panel.snapshot.baseRef?.trim() ?? ''
+  const targetRef = props.panel.snapshot.targetRef?.trim() ?? ''
+  if (!baseRef && !targetRef) return ''
+  if (!baseRef) return targetRef
+  if (!targetRef) return baseRef
+  return `${baseRef} -> ${targetRef}`
+})
+
+const workspaceEmptyMessage = computed(() => {
+  if (props.panel.kind !== 'workspace') return ''
+  if (props.panel.snapshot.warning) {
+    return tUi(normalizedLanguage.value, 'diffPanel.empty.warning')
+  }
+  if (props.panel.snapshot.mode === 'branch' && !props.panel.snapshot.baseRef) {
+    return tUi(normalizedLanguage.value, 'diffPanel.empty.branchBaseMissing')
+  }
+  return tUi(normalizedLanguage.value, 'diffPanel.empty.noChanges')
 })
 
 const highlightedPreviewHtml = computed(() => {
@@ -475,6 +538,38 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 
 .workspace-diff-panel {
   @apply m-0 flex-1 min-h-0 overflow-auto bg-zinc-50;
+}
+
+.workspace-diff-mode-tabs {
+  @apply sticky top-0 z-10 flex flex-wrap gap-1 border-b border-zinc-200 bg-white px-2 py-2;
+}
+
+.workspace-diff-mode-tab {
+  @apply rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[10px] font-medium text-zinc-600 transition hover:bg-zinc-100;
+}
+
+.workspace-diff-mode-tab.is-active {
+  @apply border-zinc-900 bg-zinc-900 text-white;
+}
+
+.workspace-diff-mode-meta {
+  @apply border-b border-zinc-200 bg-zinc-50 px-2.5 py-2;
+}
+
+.workspace-diff-mode-description {
+  @apply m-0 text-[11px] leading-4 text-zinc-700;
+}
+
+.workspace-diff-mode-refs {
+  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+}
+
+.workspace-diff-warning {
+  @apply m-0 border-b border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800;
+}
+
+.workspace-diff-empty {
+  @apply m-0 border-b border-zinc-200 bg-zinc-50 px-2.5 py-3 text-[11px] leading-4 text-zinc-500;
 }
 
 .workspace-diff-list {
