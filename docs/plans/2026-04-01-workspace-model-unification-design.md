@@ -243,3 +243,15 @@ Bridge 不再承担前端特定的展示语义。
 3. 最后再视需要收敛 bridge 端接口
 
 这能在不打断现有功能的前提下，把当前 PR 从“功能集合”继续演进成“统一工作区子系统”。
+
+## 当前落地进度
+
+截至当前分支最新实现，已完成以下收敛动作：
+
+- [src/types/codex.ts](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/types/codex.ts) 已定义 `WorkspaceModel` 及其子结构
+- [src/composables/useDesktopState.ts](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/composables/useDesktopState.ts) 已建立 `workspaceByCwd`、`selectedWorkspaceModel`
+- [src/App.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/App.vue) 已下沉工作区 diff mode 与 totals 逻辑，转为消费 workspace store
+- [src/components/content/CodePreviewPanel.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/components/content/CodePreviewPanel.vue) 已改为围绕 `WorkspaceModel.diff` 渲染
+- [src/components/content/ThreadComposer.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/components/content/ThreadComposer.vue) 已优先从 `WorkspaceModel` 读取分支、阻塞和 persisted approvals
+
+当前仍保留少量兼容层字段，主要用于平滑迁移旧组件输入，后续可继续清理。

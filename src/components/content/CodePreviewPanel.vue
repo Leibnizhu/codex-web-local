@@ -21,7 +21,7 @@
           :key="mode"
           type="button"
           class="workspace-diff-mode-tab"
-          :class="{ 'is-active': panel.snapshot.mode === mode }"
+          :class="{ 'is-active': workspaceSnapshot.mode === mode }"
           @click="emit('change-workspace-mode', mode)"
         >
           {{ getWorkspaceModeLabel(mode) }}
@@ -31,12 +31,12 @@
         <p class="workspace-diff-mode-description">{{ workspaceModeDescription }}</p>
         <p v-if="workspaceModeRefs" class="workspace-diff-mode-refs">{{ workspaceModeRefs }}</p>
       </div>
-      <p v-if="panel.snapshot.warning" class="workspace-diff-warning">{{ panel.snapshot.warning }}</p>
-      <p v-if="panel.snapshot.files.length === 0" class="workspace-diff-empty">
+      <p v-if="workspaceSnapshot.warning" class="workspace-diff-warning">{{ workspaceSnapshot.warning }}</p>
+      <p v-if="workspaceSnapshot.files.length === 0" class="workspace-diff-empty">
         {{ workspaceEmptyMessage }}
       </p>
       <ul class="workspace-diff-list">
-        <li v-for="change in panel.snapshot.files" :key="`workspace:${panel.snapshot.mode}:${change.path}`" class="workspace-diff-item">
+        <li v-for="change in workspaceSnapshot.files" :key="`workspace:${workspaceSnapshot.mode}:${change.path}`" class="workspace-diff-item">
           <button
             type="button"
             class="workspace-diff-item-button"
@@ -101,8 +101,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
-import type { UiChangedFile, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot } from '../../types/codex'
+import { computed, reactive, watch } from 'vue'
+import type { UiChangedFile, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot, WorkspaceModel } from '../../types/codex'
 import type { FilePreviewPayload } from '../../api/codexGateway'
 import { formatDisplayPath } from '../../utils/pathUtils'
 import IconTablerX from '../icons/IconTablerX.vue'
@@ -113,7 +113,7 @@ import hljs from 'highlight.js/lib/common'
 export type PreviewPanelState =
   | { kind: 'file'; payload: FilePreviewPayload }
   | { kind: 'diff'; path: string; diff: string; additions: number; deletions: number }
-  | { kind: 'workspace'; cwd: string; snapshot: UiWorkspaceDiffSnapshot; expandedPaths: Record<string, boolean> }
+  | { kind: 'workspace'; cwd: string }
 
 type RenderableDiffLine = {
   kind: 'add' | 'del' | 'ctx'
@@ -134,6 +134,7 @@ const props = defineProps<{
   panel: PreviewPanelState
   cwd: string
   matchedFileDiff: UiChangedFile | null
+  workspaceModel?: WorkspaceModel | null
   uiLanguage?: UiLanguage
   closeLabel: string
 }>()
@@ -145,23 +146,36 @@ const emit = defineEmits<{
 
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
 const workspaceDiffModes: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit']
+const EMPTY_WORKSPACE_SNAPSHOT: UiWorkspaceDiffSnapshot = {
+  mode: 'unstaged',
+  cwd: '',
+  label: '',
+  baseRef: null,
+  targetRef: null,
+  warning: null,
+  files: [],
+  totalAdditions: 0,
+  totalDeletions: 0,
+}
 
 // ─── Workspace diff 展开状态 ─────────────────────────────────
 const localExpandedPaths = reactive<Record<string, boolean>>({})
 
 function isWorkspaceDiffFileExpanded(path: string): boolean {
-  if (props.panel.kind === 'workspace') {
-    return props.panel.expandedPaths[path] === true
-  }
   return localExpandedPaths[path] === true
 }
 
 function toggleWorkspaceDiffFile(path: string): void {
-  if (props.panel.kind === 'workspace') {
-    props.panel.expandedPaths[path] = props.panel.expandedPaths[path] !== true
-    return
-  }
   localExpandedPaths[path] = localExpandedPaths[path] !== true
+}
+
+function resetExpandedWorkspacePaths(nextPaths: string[]): void {
+  for (const key of Object.keys(localExpandedPaths)) {
+    delete localExpandedPaths[key]
+  }
+  if (nextPaths.length > 0) {
+    localExpandedPaths[nextPaths[0]] = true
+  }
 }
 
 // ─── HTML 转义 ───────────────────────────────────────────────
@@ -368,7 +382,7 @@ const panelTitle = computed(() => {
 
 const panelSubtitle = computed(() => {
   if (props.panel.kind === 'workspace') {
-    return `${props.panel.snapshot.files.length} ${tUi(normalizedLanguage.value, 'diffPanel.filesUnit')} +${props.panel.snapshot.totalAdditions} -${props.panel.snapshot.totalDeletions}`
+    return `${workspaceSnapshot.value.files.length} ${tUi(normalizedLanguage.value, 'diffPanel.filesUnit')} +${workspaceSnapshot.value.totalAdditions} -${workspaceSnapshot.value.totalDeletions}`
   }
   if (props.panel.kind === 'diff') {
     if (props.panel.additions === 0 && props.panel.deletions === 0) return ''
@@ -376,6 +390,35 @@ const panelSubtitle = computed(() => {
   }
   return props.panel.payload.line ? `Line ${props.panel.payload.line}` : ''
 })
+
+const workspaceSnapshot = computed<UiWorkspaceDiffSnapshot>(() => {
+  if (props.panel.kind !== 'workspace') return EMPTY_WORKSPACE_SNAPSHOT
+  const model = props.workspaceModel
+  if (!model || model.cwd !== props.panel.cwd) {
+    return {
+      ...EMPTY_WORKSPACE_SNAPSHOT,
+      cwd: props.panel.cwd,
+    }
+  }
+  const selectedMode = model.diff.selectedMode
+  return model.diff.snapshots[selectedMode] ?? {
+    ...EMPTY_WORKSPACE_SNAPSHOT,
+    mode: selectedMode,
+    cwd: model.cwd,
+  }
+})
+
+watch(
+  () =>
+    props.panel.kind === 'workspace'
+      ? `${props.panel.cwd}:${workspaceSnapshot.value.mode}:${workspaceSnapshot.value.files.map((row) => row.path).join('|')}`
+      : '',
+  () => {
+    if (props.panel.kind !== 'workspace') return
+    resetExpandedWorkspacePaths(workspaceSnapshot.value.files.map((row) => row.path))
+  },
+  { immediate: true },
+)
 
 function getWorkspaceModeLabel(mode: UiWorkspaceDiffMode): string {
   if (mode === 'unstaged') return tUi(normalizedLanguage.value, 'diffPanel.mode.unstaged')
@@ -386,7 +429,7 @@ function getWorkspaceModeLabel(mode: UiWorkspaceDiffMode): string {
 
 const workspaceModeDescription = computed(() => {
   if (props.panel.kind !== 'workspace') return ''
-  const mode = props.panel.snapshot.mode
+  const mode = workspaceSnapshot.value.mode
   if (mode === 'unstaged') return tUi(normalizedLanguage.value, 'diffPanel.desc.unstaged')
   if (mode === 'staged') return tUi(normalizedLanguage.value, 'diffPanel.desc.staged')
   if (mode === 'branch') return tUi(normalizedLanguage.value, 'diffPanel.desc.branch')
@@ -395,8 +438,8 @@ const workspaceModeDescription = computed(() => {
 
 const workspaceModeRefs = computed(() => {
   if (props.panel.kind !== 'workspace') return ''
-  const baseRef = props.panel.snapshot.baseRef?.trim() ?? ''
-  const targetRef = props.panel.snapshot.targetRef?.trim() ?? ''
+  const baseRef = workspaceSnapshot.value.baseRef?.trim() ?? ''
+  const targetRef = workspaceSnapshot.value.targetRef?.trim() ?? ''
   if (!baseRef && !targetRef) return ''
   if (!baseRef) return targetRef
   if (!targetRef) return baseRef
@@ -405,10 +448,10 @@ const workspaceModeRefs = computed(() => {
 
 const workspaceEmptyMessage = computed(() => {
   if (props.panel.kind !== 'workspace') return ''
-  if (props.panel.snapshot.warning) {
+  if (workspaceSnapshot.value.warning) {
     return tUi(normalizedLanguage.value, 'diffPanel.empty.warning')
   }
-  if (props.panel.snapshot.mode === 'branch' && !props.panel.snapshot.baseRef) {
+  if (workspaceSnapshot.value.mode === 'branch' && !workspaceSnapshot.value.baseRef) {
     return tUi(normalizedLanguage.value, 'diffPanel.empty.branchBaseMissing')
   }
   return tUi(normalizedLanguage.value, 'diffPanel.empty.noChanges')

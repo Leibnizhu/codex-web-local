@@ -373,6 +373,7 @@ import type {
   UiRateLimitUsage,
   UiThreadContextUsage,
   UiWorkspaceBranchState,
+  WorkspaceModel,
   WorkspaceBranchBlockReason,
 } from '../../types/codex'
 import { tUi, type UiLanguage } from '../../i18n/uiText'
@@ -396,6 +397,7 @@ const props = defineProps<{
   selectedReasoningEffort: ReasoningEffort | ''
   selectedChatMode: ChatMode
   threadBranch?: string
+  workspaceModel?: WorkspaceModel | null
   workspaceBranchState?: UiWorkspaceBranchState | null
   persistedServerRequests?: UiPersistedServerRequest[]
   contextUsage?: UiThreadContextUsage | null
@@ -489,8 +491,39 @@ const modelOptions = computed(() =>
 const reasoningLabel = computed(() =>
   tUi(normalizedLanguage.value, 'composer.reasoningEffort'),
 )
+const resolvedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
+  const workspace = props.workspaceModel
+  if (workspace) {
+    return {
+      cwd: workspace.cwd,
+      isRepo: workspace.branch.isRepo,
+      isDirty: workspace.gitStatus.isDirty,
+      currentBranch: workspace.branch.currentBranch,
+      branches: workspace.branch.branches,
+      dirtySummary: workspace.gitStatus.summary ?? {
+        trackedModified: 0,
+        staged: 0,
+        untracked: 0,
+        conflicted: 0,
+        renamed: 0,
+        deleted: 0,
+      },
+      dirtyEntries: workspace.gitStatus.entries,
+      isLoading: workspace.branch.isLoading,
+      isSwitching: workspace.branch.isSwitching,
+      blockedReasons: workspace.guard.blockedReasons,
+    }
+  }
+  return props.workspaceBranchState ?? null
+})
+const resolvedPersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
+  if (props.workspaceModel) {
+    return props.workspaceModel.approvals.persisted
+  }
+  return props.persistedServerRequests ?? []
+})
 const currentBranchName = computed(() => {
-  const workspaceBranch = props.workspaceBranchState?.currentBranch?.trim() ?? ''
+  const workspaceBranch = resolvedWorkspaceBranchState.value?.currentBranch?.trim() ?? ''
   if (workspaceBranch) return workspaceBranch
   return props.threadBranch?.trim() ?? ''
 })
@@ -502,16 +535,16 @@ const branchLabel = computed(() => {
 const branchName = computed(() => currentBranchName.value)
 const shouldShowBranchChip = computed(() => {
   if (!props.activeThreadId) return false
-  return branchName.value.length > 0 || props.workspaceBranchState != null
+  return branchName.value.length > 0 || resolvedWorkspaceBranchState.value != null
 })
-const isBranchLoading = computed(() => props.workspaceBranchState?.isLoading === true)
-const isBranchSwitching = computed(() => props.workspaceBranchState?.isSwitching === true)
-const branchBlockedReasons = computed<WorkspaceBranchBlockReason[]>(() => props.workspaceBranchState?.blockedReasons ?? [])
+const isBranchLoading = computed(() => resolvedWorkspaceBranchState.value?.isLoading === true)
+const isBranchSwitching = computed(() => resolvedWorkspaceBranchState.value?.isSwitching === true)
+const branchBlockedReasons = computed<WorkspaceBranchBlockReason[]>(() => resolvedWorkspaceBranchState.value?.blockedReasons ?? [])
 const isBranchActionBlocked = computed(() =>
   props.disabled === true || branchBlockedReasons.value.length > 0,
 )
 const branchDirtySummaryLabels = computed(() => {
-  const summary = props.workspaceBranchState?.dirtySummary
+  const summary = resolvedWorkspaceBranchState.value?.dirtySummary
   if (!summary) return []
   const labels: string[] = []
   if (summary.trackedModified > 0) {
@@ -535,20 +568,20 @@ const branchDirtySummaryLabels = computed(() => {
   return labels
 })
 const branchDirtyPreviewPaths = computed(() =>
-  (props.workspaceBranchState?.dirtyEntries ?? [])
+  (resolvedWorkspaceBranchState.value?.dirtyEntries ?? [])
     .map((entry) => entry.path.trim())
     .filter((path) => path.length > 0)
     .slice(0, 4),
 )
 const branchDirtyOverflowCount = computed(() => {
-  const total = props.workspaceBranchState?.dirtyEntries?.length ?? 0
+  const total = resolvedWorkspaceBranchState.value?.dirtyEntries?.length ?? 0
   return Math.max(0, total - branchDirtyPreviewPaths.value.length)
 })
 const branchPersistedRecords = computed<UiPersistedServerRequest[]>(() =>
-  (props.persistedServerRequests ?? []).slice(0, 3),
+  resolvedPersistedServerRequests.value.slice(0, 3),
 )
 const availableBranches = computed(() => {
-  const branches = props.workspaceBranchState?.branches ?? []
+  const branches = resolvedWorkspaceBranchState.value?.branches ?? []
   const current = currentBranchName.value
   const normalized = branches.map((branch) => branch.trim()).filter((branch) => branch.length > 0)
   if (current && !normalized.includes(current)) {

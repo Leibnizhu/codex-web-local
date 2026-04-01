@@ -200,3 +200,14 @@ git commit -m "refactor: 收敛工作区逻辑到统一模型"
 ```bash
 git commit -m "docs: 补充工作区统一模型后续演进方向"
 ```
+
+## 当前执行进度
+
+- 已完成：Task 1、Task 2、Task 3、Task 4、Task 5
+- 待继续评估：Task 6
+
+当前实现已经完成统一工作区模型的前端收敛骨架，后续重点从“模型落地”转向“能力增强”，包括：
+
+- `Git Status` 正式进入 panel
+- `base branch` 可配置
+- 是否引入 bridge 侧统一 `workspace-inspector` 接口

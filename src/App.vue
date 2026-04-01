@@ -127,7 +127,8 @@
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
                 :is-turn-in-progress="false"
-                :thread-branch="selectedWorkspaceBranchState?.currentBranch || selectedThread?.branch || ''"
+                :thread-branch="selectedWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
+                :workspace-model="selectedWorkspaceModel"
                 :workspace-branch-state="selectedWorkspaceBranchState"
                 :persisted-server-requests="selectedWorkspacePersistedServerRequests"
                 :context-usage="selectedThreadContextUsage"
@@ -168,6 +169,7 @@
                 :panel="previewPanel"
                 :cwd="selectedThread?.cwd ?? ''"
                 :matched-file-diff="previewMatchedDiff"
+                :workspace-model="selectedWorkspaceModel"
                 :ui-language="uiLanguage"
                 :close-label="t('app.closeCodePreview')"
                 @change-workspace-mode="onChangeWorkspaceDiffMode"
@@ -241,7 +243,8 @@
                 :selected-model="selectedModelId"
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
-                :thread-branch="selectedWorkspaceBranchState?.currentBranch || selectedThread?.branch || ''"
+                :thread-branch="selectedWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
+                :workspace-model="selectedWorkspaceModel"
                 :workspace-branch-state="selectedWorkspaceBranchState"
                 :persisted-server-requests="selectedWorkspacePersistedServerRequests"
                 :context-usage="selectedThreadContextUsage"
@@ -284,7 +287,7 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
-import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges, UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot } from './types/codex'
+import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges, UiWorkspaceDiffMode } from './types/codex'
 import { fetchFilePreview } from './api/codexGateway'
 import {
   normalizePathSeparators,
@@ -468,7 +471,7 @@ const canOpenWorkspaceDiff = computed(() => {
   return cwd.length > 0
 })
 function buildWorkspaceDirtySummaryLabels(): string[] {
-  const summary = selectedWorkspaceBranchState.value?.dirtySummary
+  const summary = selectedWorkspaceModel.value?.gitStatus.summary
   if (!summary) return []
   const labels: string[] = []
   if (summary.trackedModified > 0) {
@@ -493,20 +496,20 @@ function buildWorkspaceDirtySummaryLabels(): string[] {
 }
 const workspaceDirtySummaryLabels = computed(() => buildWorkspaceDirtySummaryLabels())
 const workspaceDirtyPreviewPaths = computed(() =>
-  (selectedWorkspaceBranchState.value?.dirtyEntries ?? [])
+  (selectedWorkspaceModel.value?.gitStatus.entries ?? [])
     .map((entry) => entry.path.trim())
     .filter((path) => path.length > 0)
     .slice(0, 4),
 )
 const workspaceDirtyOverflowCount = computed(() => {
-  const total = selectedWorkspaceBranchState.value?.dirtyEntries.length ?? 0
+  const total = selectedWorkspaceModel.value?.gitStatus.entries.length ?? 0
   return Math.max(0, total - workspaceDirtyPreviewPaths.value.length)
 })
 const workspaceDirtyHiddenNotice = computed(() => {
   if (isHomeRoute.value) return false
-  const state = selectedWorkspaceBranchState.value
-  if (!state || state.isDirty !== true) return false
-  if (state.dirtyEntries.length === 0) return false
+  const workspace = selectedWorkspaceModel.value
+  if (!workspace || workspace.gitStatus.isDirty !== true) return false
+  if (workspace.gitStatus.entries.length === 0) return false
   return workspaceDiffTotals.value.additions === 0 && workspaceDiffTotals.value.deletions === 0
 })
 const previewMatchedDiff = computed(() => {
@@ -802,8 +805,6 @@ async function onOpenWorkspaceDiff(): Promise<void> {
   previewPanel.value = {
     kind: 'workspace',
     cwd,
-    snapshot,
-    expandedPaths: buildExpandedPaths(snapshot),
   }
 }
 
@@ -813,8 +814,6 @@ async function openWorkspaceDiffPanel(cwd: string, mode: UiWorkspaceDiffMode): P
   previewPanel.value = {
     kind: 'workspace',
     cwd,
-    snapshot,
-    expandedPaths: buildExpandedPaths(snapshot),
   }
 }
 
@@ -822,14 +821,6 @@ async function onChangeWorkspaceDiffMode(mode: UiWorkspaceDiffMode): Promise<voi
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   if (!cwd) return
   await openWorkspaceDiffPanel(cwd, mode)
-}
-
-function buildExpandedPaths(snapshot: UiWorkspaceDiffSnapshot): Record<string, boolean> {
-  const expandedPaths: Record<string, boolean> = {}
-  if (snapshot.files.length > 0) {
-    expandedPaths[snapshot.files[0].path] = true
-  }
-  return expandedPaths
 }
 
 function loadSidebarCollapsed(): boolean {
