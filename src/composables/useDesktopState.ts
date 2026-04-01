@@ -646,9 +646,7 @@ export function useDesktopState() {
   function listLiveServerRequestsForWorkspace(cwd: string): UiServerRequest[] {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return []
-    const matches: UiServerRequest[] = [
-      ...(pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []),
-    ]
+    const matches: UiServerRequest[] = []
     for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
       if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
       const mappedCwd = getThreadCwdById(threadId)
