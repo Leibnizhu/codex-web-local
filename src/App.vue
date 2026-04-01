@@ -838,6 +838,7 @@ async function onUpdateWorkspaceBaseBranch(branch: string): Promise<void> {
   if (previewPanel.value?.kind === 'workspace') {
     await openWorkspaceDiffPanel(cwd, 'branch')
   }
+  return expandedPaths
 }
 
 function loadSidebarCollapsed(): boolean {
