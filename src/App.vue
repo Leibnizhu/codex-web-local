@@ -479,7 +479,7 @@ const canOpenWorkspaceDiff = computed(() => {
   return cwd.length > 0
 })
 function buildWorkspaceDirtySummaryLabels(): string[] {
-  const summary = selectedWorkspaceBranchState.value?.dirtySummary
+  const summary = selectedWorkspaceModel.value?.gitStatus.summary
   if (!summary) return []
   const labels: string[] = []
   if (summary.trackedModified > 0) {
@@ -504,20 +504,20 @@ function buildWorkspaceDirtySummaryLabels(): string[] {
 }
 const workspaceDirtySummaryLabels = computed(() => buildWorkspaceDirtySummaryLabels())
 const workspaceDirtyPreviewPaths = computed(() =>
-  (selectedWorkspaceBranchState.value?.dirtyEntries ?? [])
+  (selectedWorkspaceModel.value?.gitStatus.entries ?? [])
     .map((entry) => entry.path.trim())
     .filter((path) => path.length > 0)
     .slice(0, 4),
 )
 const workspaceDirtyOverflowCount = computed(() => {
-  const total = selectedWorkspaceBranchState.value?.dirtyEntries.length ?? 0
+  const total = selectedWorkspaceModel.value?.gitStatus.entries.length ?? 0
   return Math.max(0, total - workspaceDirtyPreviewPaths.value.length)
 })
 const workspaceDirtyHiddenNotice = computed(() => {
   if (isHomeRoute.value) return false
-  const state = selectedWorkspaceBranchState.value
-  if (!state || state.isDirty !== true) return false
-  if (state.dirtyEntries.length === 0) return false
+  const workspace = selectedWorkspaceModel.value
+  if (!workspace || workspace.gitStatus.isDirty !== true) return false
+  if (workspace.gitStatus.entries.length === 0) return false
   return workspaceDiffTotals.value.additions === 0 && workspaceDiffTotals.value.deletions === 0
 })
 const previewMatchedDiff = computed(() => {
