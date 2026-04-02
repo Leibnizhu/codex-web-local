@@ -1022,7 +1022,17 @@ class AppServerProcess {
 
   private async upsertPersistedServerRequest(record: PersistedServerRequest): Promise<void> {
     await this.ensurePersistedServerRequestsLoaded()
-    this.persistedServerRequests.set(record.id, record)
+    const current = this.persistedServerRequests.get(record.id)
+    this.persistedServerRequests.set(record.id, current
+      ? {
+          ...record,
+          resolvedAtIso: current.resolvedAtIso,
+          resolutionKind: current.resolutionKind,
+          dismissedAtIso: current.dismissedAtIso,
+          dismissedReason: current.dismissedReason,
+          dismissedBy: current.dismissedBy,
+        }
+      : record)
     this.queuePersistedServerRequestsFlush()
   }
 
@@ -1155,11 +1165,15 @@ class AppServerProcess {
           dismissedBy: null,
         })
       } else {
-        const persisted = this.toPersistedServerRequest(pendingRequest)
+        const persisted = await this.toPersistedServerRequest(pendingRequest)
+        const current = this.persistedServerRequests.get(requestId)
         this.persistedServerRequests.set(requestId, {
-          ...persisted,
+          ...(current ?? persisted),
           resolvedAtIso,
           resolutionKind,
+          dismissedAtIso: null,
+          dismissedReason: null,
+          dismissedBy: null,
         })
       }
 
