@@ -355,18 +355,32 @@ async function collectWorkspaceChangesForDiffArgs(
 
   const numstatOutput = await runGit(numstatArgs, targetCwd)
   const rows = parseNumstat(numstatOutput)
-  const files: WorkspaceFileChange[] = []
+  const files: WorkspaceFileChange[] = new Array(rows.length)
 
-  for (const row of rows) {
-    const diff = await runGit(diffArgsForPath(row.path), targetCwd).catch(() => '')
-    files.push({
-      path: row.path,
-      additions: row.additions,
-      deletions: row.deletions,
-      diff: diff.trimEnd(),
-    })
+  // Limit the number of concurrent git diff processes to avoid overwhelming the system
+  const maxConcurrentDiffs = 4
+  let currentIndex = 0
+
+  async function worker(): Promise<void> {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const index = currentIndex++
+      if (index >= rows.length) {
+        break
+      }
+      const row = rows[index]
+      const diff = await runGit(diffArgsForPath(row.path), targetCwd).catch(() => '')
+      files[index] = {
+        path: row.path,
+        additions: row.additions,
+        deletions: row.deletions,
+        diff: diff.trimEnd(),
+      }
+    }
   }
 
+  const workerCount = Math.min(maxConcurrentDiffs, rows.length)
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
   return files.sort((first, second) => first.path.localeCompare(second.path))
 }
 
