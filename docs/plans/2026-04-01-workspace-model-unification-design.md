@@ -11,11 +11,11 @@
 
 这些能力已经形成了“工作区操作台”的雏形，但同一份工作区真相仍然分散在多个文件中：
 
-- [src/server/codexAppServerBridge.ts](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/server/codexAppServerBridge.ts)
-- [src/composables/useDesktopState.ts](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/composables/useDesktopState.ts)
-- [src/App.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/App.vue)
-- [src/components/content/CodePreviewPanel.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/components/content/CodePreviewPanel.vue)
-- [src/components/content/ThreadComposer.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/components/content/ThreadComposer.vue)
+- [src/server/codexAppServerBridge.ts](../../src/server/codexAppServerBridge.ts)
+- [src/composables/useDesktopState.ts](../../src/composables/useDesktopState.ts)
+- [src/App.vue](../../src/App.vue)
+- [src/components/content/CodePreviewPanel.vue](../../src/components/content/CodePreviewPanel.vue)
+- [src/components/content/ThreadComposer.vue](../../src/components/content/ThreadComposer.vue)
 
 结果是：
 
