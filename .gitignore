@@ -9,3 +9,5 @@ PROJECT_SPEC.md
 .idea/
 .vscode/
 .codex/
+.playwright/
+.playwright-cli/
