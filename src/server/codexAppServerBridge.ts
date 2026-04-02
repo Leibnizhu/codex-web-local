@@ -1065,8 +1065,36 @@ class AppServerProcess {
       throw new Error(`No pending server request found for id ${String(requestId)}`)
     }
     this.pendingServerRequests.delete(requestId)
-    void this.markPersistedServerRequestResolved(requestId, reply.error ? 'rejected' : 'resolved')
 
+    // Ensure the persisted approval ledger is updated even if the initial upsert
+    // has not yet completed. We use the available pendingRequest data to
+    // create or update the persisted record and mark it as resolved.
+    void (async () => {
+      await this.ensurePersistedServerRequestsLoaded()
+      const existing = this.persistedServerRequests.get(requestId)
+      const resolvedAtIso = new Date().toISOString()
+      const resolutionKind = reply.error ? ('rejected' as const) : ('resolved' as const)
+
+      if (existing) {
+        this.persistedServerRequests.set(requestId, {
+          ...existing,
+          resolvedAtIso,
+          resolutionKind,
+          dismissedAtIso: null,
+          dismissedReason: null,
+          dismissedBy: null,
+        })
+      } else {
+        const persisted = this.toPersistedServerRequest(pendingRequest)
+        this.persistedServerRequests.set(requestId, {
+          ...persisted,
+          resolvedAtIso,
+          resolutionKind,
+        })
+      }
+
+      this.queuePersistedServerRequestsFlush()
+    })()
     this.sendServerRequestReply(requestId, reply)
     const requestParams = asRecord(pendingRequest.params)
     const threadId =
