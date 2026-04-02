@@ -152,6 +152,10 @@ const UI_TEXT = {
     zh: '检测到未闭合审批记录',
     en: 'Detected unresolved approval records',
   },
+  'composer.branchGlobalRequestsHint': {
+    zh: '当前会话存在未归属到此工作区的审批请求或记录，请先留意处理。',
+    en: 'This session has approval requests or records that are not scoped to the current workspace.',
+  },
   'composer.branchPersistedRecordsTitle': {
     zh: '未闭合审批记录',
     en: 'Unresolved approval records',

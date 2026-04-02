@@ -308,6 +308,12 @@ export function useDesktopState() {
   const selectedWorkspacePersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
     return selectedWorkspaceModel.value?.approvals.persisted ?? []
   })
+  const globalLiveServerRequests = computed<UiServerRequest[]>(() => {
+    return pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+  })
+  const globalPersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
+    return persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+  })
   const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
     const threadId = selectedThreadId.value
     if (!threadId) return null
@@ -586,10 +592,6 @@ export function useDesktopState() {
   function hasPendingServerRequestsInWorkspace(cwd: string): boolean {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return false
-    const globalRequests = pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
-    if (globalRequests.length > 0) {
-      return true
-    }
     return allThreads.value.some((thread) => {
       if (thread.cwd.trim() !== normalizedCwd) return false
       const requests = pendingServerRequestsByThreadId.value[thread.id] ?? []
@@ -600,7 +602,7 @@ export function useDesktopState() {
   function countLiveServerRequestsInWorkspace(cwd: string): number {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return 0
-    let count = pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE]?.length ?? 0
+    let count = 0
     for (const thread of allThreads.value) {
       if (thread.cwd.trim() !== normalizedCwd) continue
       count += pendingServerRequestsByThreadId.value[thread.id]?.length ?? 0
@@ -621,8 +623,7 @@ export function useDesktopState() {
   function listPersistedServerRequestsForWorkspace(cwd: string): UiPersistedServerRequest[] {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return []
-    const globalRequests = persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
-    const matches: UiPersistedServerRequest[] = [...globalRequests]
+    const matches: UiPersistedServerRequest[] = []
     for (const [threadId, requests] of Object.entries(persistedServerRequestsByThreadId.value)) {
       if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
       for (const request of requests) {
@@ -645,9 +646,7 @@ export function useDesktopState() {
   function listLiveServerRequestsForWorkspace(cwd: string): UiServerRequest[] {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return []
-    const matches: UiServerRequest[] = [
-      ...(pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []),
-    ]
+    const matches: UiServerRequest[] = []
     for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
       if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
       const mappedCwd = getThreadCwdById(threadId)
@@ -2328,6 +2327,8 @@ export function useDesktopState() {
     selectedThreadServerRequests,
     selectedThreadPersistedServerRequests,
     selectedWorkspacePersistedServerRequests,
+    globalLiveServerRequests,
+    globalPersistedServerRequests,
     selectedWorkspaceModel,
     selectedWorkspaceDiffTotals,
     selectedThreadFileChanges,

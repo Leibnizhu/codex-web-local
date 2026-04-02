@@ -152,6 +152,24 @@ type WorkspaceDiffSnapshot = {
   totalDeletions: number
 }
 
+type ServerSideWorkspaceGuardBlockedReason =
+  | 'not_repo'
+  | 'workspace_dirty'
+  | 'pending_server_requests'
+  | 'persisted_server_requests'
+  | 'unresolved_server_request_scope'
+
+type ServerSideWorkspaceGuard = {
+  cwd: string
+  isRepo: boolean
+  blockedReasons: ServerSideWorkspaceGuardBlockedReason[]
+}
+
+type ResolvedRequestWorkspace = {
+  cwd: string
+  unresolvedScope: boolean
+}
+
 type WorkspaceDirtyKind =
   | 'modified'
   | 'added'
@@ -800,6 +818,7 @@ class AppServerProcess {
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
   private readonly persistedServerRequests = new Map<number, PersistedServerRequest>()
+  private readonly threadCwdById = new Map<string, string>()
   private persistedServerRequestsLoaded: Promise<void> | null = null
   private persistedServerRequestsFlushChain: Promise<void> = Promise.resolve()
 
@@ -1019,7 +1038,58 @@ class AppServerProcess {
     this.queuePersistedServerRequestsFlush()
   }
 
-  private toPersistedServerRequest(pendingRequest: PendingServerRequest): PersistedServerRequest {
+  private async resolveThreadCwd(threadId: string): Promise<string | null> {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return null
+
+    const cached = this.threadCwdById.get(normalizedThreadId)
+    if (cached) return cached
+
+    try {
+      const payload = asRecord(await this.rpc('thread/read', {
+        threadId: normalizedThreadId,
+        includeTurns: false,
+      }))
+      const thread = asRecord(payload?.thread)
+      const cwd = typeof thread?.cwd === 'string' ? thread.cwd.trim() : ''
+      if (!cwd) return null
+      const normalizedCwd = resolve(cwd)
+      this.threadCwdById.set(normalizedThreadId, normalizedCwd)
+      return normalizedCwd
+    } catch {
+      return null
+    }
+  }
+
+  private async resolveRequestWorkspace(params: unknown, fallbackThreadId = ''): Promise<ResolvedRequestWorkspace> {
+    const requestParams = asRecord(params)
+    const requestCwd = typeof requestParams?.cwd === 'string' ? requestParams.cwd.trim() : ''
+    if (requestCwd) {
+      return {
+        cwd: resolve(requestCwd),
+        unresolvedScope: false,
+      }
+    }
+
+    const threadId =
+      typeof requestParams?.threadId === 'string' && requestParams.threadId.trim().length > 0
+        ? requestParams.threadId
+        : fallbackThreadId
+    if (!threadId.trim()) {
+      return {
+        cwd: '',
+        unresolvedScope: false,
+      }
+    }
+
+    const resolvedCwd = await this.resolveThreadCwd(threadId)
+    return {
+      cwd: resolvedCwd ?? '',
+      unresolvedScope: resolvedCwd === null,
+    }
+  }
+
+  private async toPersistedServerRequest(pendingRequest: PendingServerRequest): Promise<PersistedServerRequest> {
     const requestParams = asRecord(pendingRequest.params)
     return {
       id: pendingRequest.id,
@@ -1027,7 +1097,7 @@ class AppServerProcess {
       threadId: typeof requestParams?.threadId === 'string' ? requestParams.threadId : '',
       turnId: typeof requestParams?.turnId === 'string' ? requestParams.turnId : '',
       itemId: typeof requestParams?.itemId === 'string' ? requestParams.itemId : '',
-      cwd: typeof requestParams?.cwd === 'string' ? requestParams.cwd : '',
+      cwd: (await this.resolveRequestWorkspace(pendingRequest.params)).cwd,
       params: pendingRequest.params,
       receivedAtIso: pendingRequest.receivedAtIso,
       resolvedAtIso: null,
@@ -1121,7 +1191,10 @@ class AppServerProcess {
       receivedAtIso: new Date().toISOString(),
     }
     this.pendingServerRequests.set(requestId, pendingRequest)
-    void this.upsertPersistedServerRequest(this.toPersistedServerRequest(pendingRequest))
+    void (async () => {
+      const persisted = await this.toPersistedServerRequest(pendingRequest)
+      await this.upsertPersistedServerRequest(persisted)
+    })()
 
     this.emitNotification({
       method: 'server/request',
@@ -1204,6 +1277,98 @@ class AppServerProcess {
 
   listPendingServerRequests(): PendingServerRequest[] {
     return Array.from(this.pendingServerRequests.values())
+  }
+
+  private async listPendingServerRequestsForWorkspace(cwd: string): Promise<{
+    requests: PendingServerRequest[]
+    hasUnresolvedScope: boolean
+  }> {
+    const targetCwd = resolve(cwd)
+    const requests = await Promise.all(Array.from(this.pendingServerRequests.values()).map(async (request) => {
+      const resolvedWorkspace = await this.resolveRequestWorkspace(request.params)
+      return { request, resolvedWorkspace }
+    }))
+    return {
+      requests: requests
+        .filter((row) => row.resolvedWorkspace.cwd === targetCwd)
+        .map((row) => row.request)
+        .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso)),
+      hasUnresolvedScope: requests.some((row) => row.resolvedWorkspace.unresolvedScope),
+    }
+  }
+
+  private async listPersistedServerRequestsForWorkspace(cwd: string): Promise<{
+    requests: PersistedServerRequest[]
+    hasUnresolvedScope: boolean
+  }> {
+    const targetCwd = resolve(cwd)
+    await this.ensurePersistedServerRequestsLoaded()
+    if (this.prunePersistedServerRequests()) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    let shouldFlush = false
+    const requests = await Promise.all(Array.from(this.persistedServerRequests.values()).map(async (request) => {
+      if (request.resolvedAtIso !== null || request.dismissedAtIso !== null) return null
+      const resolvedWorkspace = await this.resolveRequestWorkspace(request.params, request.threadId)
+      if (!request.cwd && resolvedWorkspace.cwd) {
+        this.persistedServerRequests.set(request.id, {
+          ...request,
+          cwd: resolvedWorkspace.cwd,
+        })
+        shouldFlush = true
+      }
+      return {
+        request,
+        resolvedWorkspace: {
+          cwd: request.cwd.trim() ? resolve(request.cwd) : resolvedWorkspace.cwd,
+          unresolvedScope: resolvedWorkspace.unresolvedScope,
+        },
+      }
+    }))
+    if (shouldFlush) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    return {
+      requests: requests
+        .filter((row): row is { request: PersistedServerRequest; resolvedWorkspace: ResolvedRequestWorkspace } => row !== null)
+        .filter((row) => row.resolvedWorkspace.cwd === targetCwd)
+        .map((row) => row.request)
+        .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso)),
+      hasUnresolvedScope: requests.some((row) => row?.resolvedWorkspace.unresolvedScope === true),
+    }
+  }
+
+  async getWorkspaceGuard(cwd: string): Promise<ServerSideWorkspaceGuard> {
+    const status = await readWorkspaceGitStatus(cwd)
+    if (!status.isRepo) {
+      return {
+        cwd: status.cwd,
+        isRepo: false,
+        blockedReasons: ['not_repo'],
+      }
+    }
+
+    const blockedReasons: ServerSideWorkspaceGuardBlockedReason[] = []
+    if (status.isDirty) {
+      blockedReasons.push('workspace_dirty')
+    }
+    const pendingRequests = await this.listPendingServerRequestsForWorkspace(status.cwd)
+    if (pendingRequests.requests.length > 0) {
+      blockedReasons.push('pending_server_requests')
+    }
+    const persistedRequests = await this.listPersistedServerRequestsForWorkspace(status.cwd)
+    if (persistedRequests.requests.length > 0) {
+      blockedReasons.push('persisted_server_requests')
+    }
+    if (pendingRequests.hasUnresolvedScope || persistedRequests.hasUnresolvedScope) {
+      blockedReasons.push('unresolved_server_request_scope')
+    }
+
+    return {
+      cwd: status.cwd,
+      isRepo: true,
+      blockedReasons,
+    }
   }
 
   async listPersistedServerRequests(): Promise<PersistedServerRequest[]> {
@@ -1602,6 +1767,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
+          const guard = await appServer.getWorkspaceGuard(cwd)
+          if (guard.blockedReasons.length > 0) {
+            setJson(res, 409, {
+              error: 'Workspace branch action is blocked by current workspace state',
+              blockedReasons: guard.blockedReasons,
+            })
+            return
+          }
           await switchWorkspaceBranch(cwd, branch)
           setJson(res, 200, { ok: true })
         } catch (error) {
@@ -1621,6 +1794,14 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         }
 
         try {
+          const guard = await appServer.getWorkspaceGuard(cwd)
+          if (guard.blockedReasons.length > 0) {
+            setJson(res, 409, {
+              error: 'Workspace branch action is blocked by current workspace state',
+              blockedReasons: guard.blockedReasons,
+            })
+            return
+          }
           await createAndSwitchWorkspaceBranch(cwd, branch)
           setJson(res, 200, { ok: true })
         } catch (error) {

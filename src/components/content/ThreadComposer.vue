@@ -163,6 +163,12 @@
               <p v-else class="thread-composer-branch-menu-hint">
                 {{ tUi(normalizedLanguage, 'composer.branchWorkspaceHint') }}
               </p>
+              <p
+                v-if="branchGlobalApprovalHint"
+                class="thread-composer-branch-menu-session-hint"
+              >
+                {{ branchGlobalApprovalHint }}
+              </p>
               <div
                 v-if="branchDirtySummaryLabels.length > 0"
                 class="thread-composer-branch-dirty-summary"
@@ -399,6 +405,8 @@ const props = defineProps<{
   workspaceModel?: WorkspaceModel | null
   workspaceBranchState?: UiWorkspaceBranchState | null
   persistedServerRequests?: UiPersistedServerRequest[]
+  globalLiveRequestCount?: number
+  globalPersistedRequestCount?: number
   contextUsage?: UiThreadContextUsage | null
   rateLimitUsage?: UiRateLimitUsage | null
   isCompactingContext?: boolean
@@ -597,6 +605,12 @@ function getBranchBlockedReasonLabel(reason: WorkspaceBranchBlockReason): string
   return tUi(normalizedLanguage.value, 'composer.branchBlockedQueued')
 }
 const branchBlockedSummary = computed(() => branchBlockedReasons.value.map(getBranchBlockedReasonLabel).join(' · '))
+const branchGlobalApprovalHint = computed(() => {
+  const liveCount = Math.max(0, props.globalLiveRequestCount ?? 0)
+  const persistedCount = Math.max(0, props.globalPersistedRequestCount ?? 0)
+  if (liveCount === 0 && persistedCount === 0) return ''
+  return tUi(normalizedLanguage.value, 'composer.branchGlobalRequestsHint')
+})
 function formatPersistedRequestTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
@@ -1166,6 +1180,10 @@ watch(
 
 .thread-composer-branch-menu-hint {
   @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+}
+
+.thread-composer-branch-menu-session-hint {
+  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-400;
 }
 
 .thread-composer-branch-dirty-summary {
