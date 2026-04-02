@@ -95,6 +95,7 @@ import {
   type QueuedMessageState,
 } from './desktop-state/queue-utils'
 import {
+  listPersistedServerRequestsForWorkspace as listPersistedServerRequestsForWorkspaceFromMap,
   listSelectedServerRequests,
   removeServerRequestByIdFromMap,
   upsertServerRequestMap,
@@ -621,26 +622,11 @@ export function useDesktopState() {
   }
 
   function listPersistedServerRequestsForWorkspace(cwd: string): UiPersistedServerRequest[] {
-    const normalizedCwd = cwd.trim()
-    if (!normalizedCwd) return []
-    const matches: UiPersistedServerRequest[] = []
-    for (const [threadId, requests] of Object.entries(persistedServerRequestsByThreadId.value)) {
-      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
-      for (const request of requests) {
-        const requestCwd = request.cwd.trim()
-        if (requestCwd) {
-          if (requestCwd === normalizedCwd) {
-            matches.push(request)
-          }
-          continue
-        }
-        const mappedCwd = getThreadCwdById(request.threadId)
-        if (mappedCwd === normalizedCwd) {
-          matches.push(request)
-        }
-      }
-    }
-    return matches.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
+    return listPersistedServerRequestsForWorkspaceFromMap(
+      persistedServerRequestsByThreadId.value,
+      cwd,
+      getThreadCwdById,
+    )
   }
 
   function listLiveServerRequestsForWorkspace(cwd: string): UiServerRequest[] {
