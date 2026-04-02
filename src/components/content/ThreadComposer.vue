@@ -155,7 +155,6 @@
             <div
               v-if="isBranchMenuOpen"
               class="thread-composer-branch-menu"
-              role="menu"
             >
               <p class="thread-composer-branch-menu-title">{{ tUi(normalizedLanguage, 'composer.branchMenuTitle') }}</p>
               <p v-if="branchBlockedSummary" class="thread-composer-branch-menu-hint">
