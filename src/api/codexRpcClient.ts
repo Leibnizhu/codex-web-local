@@ -238,3 +238,99 @@ export async function fetchPendingServerRequests(): Promise<unknown[]> {
   const data = record?.data
   return Array.isArray(data) ? data : []
 }
+
+export async function fetchPersistedServerRequests(): Promise<unknown[]> {
+  const response = await fetch('/codex-api/server-requests/persisted')
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Persisted server requests failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'server-requests/persisted',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data) ? data : []
+}
+
+export async function fetchWorkspaceDiffMode(
+  cwd: string,
+  mode: string,
+  options: { baseBranch?: string | null } = {},
+): Promise<unknown> {
+  const query = new URLSearchParams({
+    cwd,
+    mode,
+  })
+  const baseBranch = options.baseBranch?.trim() ?? ''
+  if (baseBranch) {
+    query.set('baseBranch', baseBranch)
+  }
+  const response = await fetch(`/codex-api/workspace-diff-mode?${query.toString()}`)
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Workspace diff mode failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'workspace-diff-mode',
+        status: response.status,
+      },
+    )
+  }
+
+  return payload
+}
+
+export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+  const response = await fetch('/codex-api/server-requests/persisted/dismiss', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requestIds }),
+  })
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Dismiss persisted server requests failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'server-requests/persisted/dismiss',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data)
+    ? data.filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+    : []
+}
