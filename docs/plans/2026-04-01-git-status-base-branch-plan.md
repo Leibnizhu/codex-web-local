@@ -160,5 +160,5 @@ Expected: PASS
 当前这条增强主线已经完成了“Git Status 成为一等视图”和“baseBranch 可按工作区配置”的核心实现，后续重点将转向：
 
 - 优化 `baseBranch` 自动推导策略
-- 评估是否移除 [src/App.vue](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/App.vue) 中剩余的 `workspaceDirtyHiddenNotice`
+- 评估是否移除 [src/App.vue](src/App.vue) 中剩余的 `workspaceDirtyHiddenNotice`
 - 评估统一 `workspace-inspector` 接口
