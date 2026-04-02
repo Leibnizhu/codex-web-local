@@ -204,7 +204,7 @@
 
 ### Bridge 层
 
-在 [src/server/codexAppServerBridge.ts](/Users/riyuliang/workspace/coding/opencode/codex-web-local/src/server/codexAppServerBridge.ts) 中，把当前 `resolveBaseBranch()` 拆成更清晰的 3 组辅助函数：
+在 [src/server/codexAppServerBridge.ts](../../src/server/codexAppServerBridge.ts) 中，把当前 `resolveBaseBranch()` 拆成更清晰的 3 组辅助函数：
 
 - `branchExists(cwd, branch)`
 - `resolveRemoteHeadBranch(cwd, remote)`
