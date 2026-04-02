@@ -1145,7 +1145,6 @@ class AppServerProcess {
       throw new Error(`No pending server request found for id ${String(requestId)}`)
     }
     this.pendingServerRequests.delete(requestId)
-    void this.markPersistedServerRequestResolved(requestId, reply.error ? 'rejected' : 'resolved')
 
     // Ensure the persisted approval ledger is updated even if the initial upsert
     // has not yet completed. We use the available pendingRequest data to
