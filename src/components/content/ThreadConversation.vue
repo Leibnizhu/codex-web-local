@@ -672,11 +672,13 @@ onBeforeUnmount(() => {
 }
 
 .conversation-loading {
-  @apply m-0 px-6 text-sm text-slate-500;
+  @apply m-0 px-6 text-sm;
+  color: var(--color-text-muted);
 }
 
 .conversation-empty {
-  @apply m-0 px-6 text-sm text-slate-500;
+  @apply m-0 px-6 text-sm;
+  color: var(--color-text-muted);
 }
 
 .conversation-list {
@@ -721,19 +723,29 @@ onBeforeUnmount(() => {
 }
 
 .file-change-card {
-  @apply w-full max-w-180 rounded-lg border border-zinc-300 bg-zinc-100 px-0 py-0 overflow-hidden;
+  @apply w-full max-w-180 rounded-lg border px-0 py-0 overflow-hidden;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-elevated);
 }
 
 .file-change-card-header {
-  @apply px-2.5 py-1.5 border-b border-zinc-300 bg-zinc-100 flex items-center justify-between gap-2;
+  @apply px-2.5 py-1.5 border-b flex items-center justify-between gap-2;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
 }
 
 .file-change-card-title {
-  @apply m-0 text-xs leading-4 text-zinc-800;
+  @apply m-0 text-xs leading-4;
+  color: var(--color-text-primary);
 }
 
 .file-change-header-action {
-  @apply shrink-0 text-[11px] leading-4 text-zinc-700 hover:text-zinc-900 underline underline-offset-2;
+  @apply shrink-0 text-[11px] leading-4 underline underline-offset-2;
+  color: var(--color-link);
+}
+
+.file-change-header-action:hover {
+  color: var(--color-link-hover);
 }
 
 .file-change-list {
@@ -741,15 +753,22 @@ onBeforeUnmount(() => {
 }
 
 .file-change-item {
-  @apply m-0 border-b border-zinc-300 last:border-b-0;
+  @apply m-0 border-b last:border-b-0;
+  border-color: var(--color-border-default);
 }
 
 .file-change-button {
-  @apply w-full px-2.5 py-1.5 bg-zinc-200 text-left flex items-center justify-between gap-2 hover:bg-zinc-300 transition;
+  @apply w-full px-2.5 py-1.5 text-left flex items-center justify-between gap-2 transition;
+  background: var(--color-bg-muted);
+}
+
+.file-change-button:hover {
+  background: var(--color-bg-muted-hover);
 }
 
 .file-change-path {
-  @apply text-xs leading-4 text-zinc-800 truncate;
+  @apply text-xs leading-4 truncate;
+  color: var(--color-text-primary);
 }
 
 .file-change-stats {
@@ -817,11 +836,13 @@ onBeforeUnmount(() => {
 }
 
 .live-overlay-label {
-  @apply m-0 text-sm leading-5 font-medium text-zinc-600;
+  @apply m-0 text-sm leading-5 font-medium;
+  color: var(--color-text-secondary);
 }
 
 .live-overlay-reasoning {
-  @apply m-0 text-sm leading-5 text-zinc-500 whitespace-pre-wrap;
+  @apply m-0 text-sm leading-5 whitespace-pre-wrap;
+  color: var(--color-text-muted);
 }
 
 .live-overlay-error {
@@ -863,7 +884,8 @@ onBeforeUnmount(() => {
 }
 
 .message-text {
-  @apply m-0 text-sm leading-relaxed whitespace-pre-wrap text-slate-800;
+  @apply m-0 text-sm leading-relaxed whitespace-pre-wrap;
+  color: var(--color-text-primary);
 }
 
 .message-content {
@@ -871,7 +893,8 @@ onBeforeUnmount(() => {
 }
 
 .message-list {
-  @apply m-0 pl-5 list-disc text-sm leading-relaxed text-slate-800;
+  @apply m-0 pl-5 list-disc text-sm leading-relaxed;
+  color: var(--color-text-primary);
 }
 
 .message-list-item {
@@ -879,24 +902,36 @@ onBeforeUnmount(() => {
 }
 
 .message-inline-code {
-  @apply rounded-md border border-slate-200 bg-slate-100/60 px-1.5 py-0.5 text-[0.875em] leading-[1.4] text-slate-900 font-mono;
+  @apply rounded-md border px-1.5 py-0.5 text-[0.875em] leading-[1.4] font-mono;
+  border-color: var(--color-border-default);
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
 }
 
 .message-code-block {
-  @apply m-0 rounded-lg border border-slate-200 bg-slate-950 px-3 py-2 overflow-x-auto;
+  @apply m-0 rounded-lg border px-3 py-2 overflow-x-auto;
+  border-color: var(--color-border-default);
+  background: var(--color-code-block-bg);
 }
 
 .message-code-body {
-  @apply block whitespace-pre text-xs leading-5 text-slate-100;
+  @apply block whitespace-pre text-xs leading-5;
+  color: var(--color-code-block-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 .message-strong-text {
-  @apply font-semibold text-slate-900;
+  @apply font-semibold;
+  color: var(--color-text-primary);
 }
 
 .message-file-link {
-  @apply text-sm leading-relaxed text-[#0969da] no-underline hover:text-[#1f6feb] hover:underline underline-offset-2;
+  @apply text-sm leading-relaxed no-underline hover:underline underline-offset-2;
+  color: var(--color-link);
+}
+
+.message-file-link:hover {
+  color: var(--color-link-hover);
 }
 
 .message-stack[data-role='user'] {
@@ -909,7 +944,9 @@ onBeforeUnmount(() => {
 }
 
 .message-card[data-role='user'] {
-  @apply rounded-2xl bg-slate-200 px-4 py-3 max-w-[min(560px,100%)];
+  @apply rounded-2xl px-4 py-3 max-w-[min(560px,100%)];
+  background: var(--color-bg-muted);
+  color: var(--color-text-primary);
   width: fit-content;
   margin-left: auto;
   align-self: flex-end;
@@ -918,18 +955,6 @@ onBeforeUnmount(() => {
 .message-card[data-role='assistant'],
 .message-card[data-role='system'] {
   @apply px-0 py-0 bg-transparent border-none rounded-none;
-}
-
-:global(html[data-theme='dark']) .message-card[data-role='user'] {
-  @apply bg-zinc-700 border border-zinc-600;
-}
-
-:global(html[data-theme='dark']) .message-card[data-role='user'] .message-text {
-  @apply text-zinc-100;
-}
-
-:global(html[data-theme='dark']) .message-card[data-role='user'] .message-inline-code {
-  @apply border-zinc-500 bg-zinc-800 text-zinc-100;
 }
 
 .conversation-item[data-message-type='worked'] .message-stack,
@@ -943,11 +968,13 @@ onBeforeUnmount(() => {
 }
 
 .worked-separator-line {
-  @apply h-px bg-zinc-300/80 flex-1;
+  @apply h-px flex-1;
+  background: var(--color-border-default);
 }
 
 .worked-separator-text {
-  @apply m-0 text-sm leading-relaxed font-normal text-slate-800;
+  @apply m-0 text-sm leading-relaxed font-normal;
+  color: var(--color-text-secondary);
 }
 
 .image-modal-backdrop {
@@ -959,11 +986,15 @@ onBeforeUnmount(() => {
 }
 
 .image-modal-close {
-  @apply absolute top-2 right-2 z-10 w-10 h-10 rounded-full bg-white/90 text-slate-900 border border-slate-300 flex items-center justify-center;
+  @apply absolute top-2 right-2 z-10 w-10 h-10 rounded-full border flex items-center justify-center;
+  background: var(--color-bg-overlay);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-default);
 }
 
 .image-modal-image {
-  @apply block max-w-full max-h-[90vh] rounded-2xl shadow-2xl bg-white;
+  @apply block max-w-full max-h-[90vh] rounded-2xl shadow-2xl;
+  background: var(--color-bg-surface);
 }
 
 .icon-svg {

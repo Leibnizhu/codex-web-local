@@ -806,7 +806,9 @@ function resolveThemeMode(mode: ThemeMode): 'light' | 'dark' {
 
 function applyThemeMode(mode: ThemeMode): void {
   if (typeof document === 'undefined') return
-  document.documentElement.setAttribute('data-theme', resolveThemeMode(mode))
+  const resolvedMode = resolveThemeMode(mode)
+  document.documentElement.setAttribute('data-theme', resolvedMode)
+  document.documentElement.style.colorScheme = resolvedMode
 }
 
 let cleanupSystemThemeSync = () => {}
@@ -987,7 +989,8 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 }
 
 .content-root {
-  @apply h-full min-h-0 w-full flex flex-col overflow-y-hidden overflow-x-visible bg-white;
+  @apply h-full min-h-0 w-full flex flex-col overflow-y-hidden overflow-x-visible;
+  background: var(--color-bg-surface);
 }
 
 .sidebar-thread-controls-host {
@@ -995,11 +998,20 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 }
 
 .sidebar-search-toggle {
-  @apply h-6.75 w-6.75 rounded-md border border-transparent bg-transparent text-zinc-600 flex items-center justify-center transition hover:border-zinc-200 hover:bg-zinc-50;
+  @apply h-6.75 w-6.75 rounded-md border border-transparent bg-transparent flex items-center justify-center transition;
+  color: var(--color-text-secondary);
 }
 
 .sidebar-search-toggle[aria-pressed='true'] {
-  @apply border-zinc-300 bg-zinc-100 text-zinc-700;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-muted);
+  color: var(--color-text-primary);
+}
+
+.sidebar-search-toggle:hover {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
 }
 
 .sidebar-search-toggle-icon {
@@ -1007,19 +1019,36 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 }
 
 .sidebar-search-bar {
-  @apply flex items-center gap-1.5 mx-2 px-2 py-1 rounded-md border border-zinc-200 bg-white transition-colors focus-within:border-zinc-400;
+  @apply flex items-center gap-1.5 mx-2 px-2 py-1 rounded-md border transition-colors;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-surface);
+}
+
+.sidebar-search-bar:focus-within {
+  border-color: var(--color-border-strong);
 }
 
 .sidebar-search-bar-icon {
-  @apply w-3.5 h-3.5 text-zinc-400 shrink-0;
+  @apply w-3.5 h-3.5 shrink-0;
+  color: var(--color-text-muted);
 }
 
 .sidebar-search-input {
-  @apply flex-1 min-w-0 bg-transparent text-sm text-zinc-800 placeholder-zinc-400 outline-none border-none p-0;
+  @apply flex-1 min-w-0 bg-transparent text-sm outline-none border-none p-0;
+  color: var(--color-text-primary);
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--color-text-muted);
 }
 
 .sidebar-search-clear {
-  @apply w-4 h-4 rounded text-zinc-400 flex items-center justify-center transition hover:text-zinc-600;
+  @apply w-4 h-4 rounded flex items-center justify-center transition;
+  color: var(--color-text-muted);
+}
+
+.sidebar-search-clear:hover {
+  color: var(--color-text-secondary);
 }
 
 .sidebar-search-clear-icon {
@@ -1031,7 +1060,13 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 }
 
 .sidebar-footer-button {
-  @apply h-7 w-7 rounded-md border border-transparent bg-transparent text-zinc-600 flex items-center justify-center transition hover:bg-zinc-100 hover:text-zinc-800;
+  @apply h-7 w-7 rounded-md border border-transparent bg-transparent flex items-center justify-center transition;
+  color: var(--color-text-secondary);
+}
+
+.sidebar-footer-button:hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
 }
 
 .sidebar-footer-button-icon {

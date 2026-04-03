@@ -737,23 +737,37 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-diff-mode-tab {
-  @apply rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[10px] font-medium text-zinc-600 transition hover:bg-zinc-100;
+  @apply rounded-full border px-2.5 py-1 text-[10px] font-medium transition;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.workspace-diff-mode-tab:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text-primary);
 }
 
 .workspace-diff-mode-tab.is-active {
-  @apply border-zinc-900 bg-zinc-900 text-white;
+  border-color: var(--color-interactive-strong);
+  background: var(--color-interactive-strong);
+  color: var(--color-text-inverse);
 }
 
 .workspace-diff-mode-meta {
-  @apply border-b border-zinc-200 bg-zinc-50 px-2.5 py-2;
+  @apply border-b px-2.5 py-2;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
 }
 
 .workspace-diff-mode-description {
-  @apply m-0 text-[11px] leading-4 text-zinc-700;
+  @apply m-0 text-[11px] leading-4;
+  color: var(--color-text-secondary);
 }
 
 .workspace-diff-mode-refs {
-  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+  @apply mt-1 mb-0 text-[10px] leading-4;
+  color: var(--color-text-muted);
 }
 
 .workspace-diff-base-branch-row {
@@ -761,23 +775,34 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-diff-base-branch-label {
-  @apply text-[10px] leading-4 text-zinc-500 shrink-0;
+  @apply text-[10px] leading-4 shrink-0;
+  color: var(--color-text-muted);
 }
 
 .workspace-diff-base-branch-select {
-  @apply min-w-0 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] leading-4 text-zinc-700;
+  @apply min-w-0 rounded-md border px-2 py-1 text-[11px] leading-4;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
 }
 
 .workspace-diff-base-branch-resolution {
-  @apply mt-1 mb-0 text-[10px] leading-4 text-zinc-500;
+  @apply mt-1 mb-0 text-[10px] leading-4;
+  color: var(--color-text-muted);
 }
 
 .workspace-diff-warning {
-  @apply m-0 border-b border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800;
+  @apply m-0 border-b px-2.5 py-2 text-[11px] leading-4;
+  border-color: var(--color-border-default);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-text);
 }
 
 .workspace-diff-empty {
-  @apply m-0 border-b border-zinc-200 bg-zinc-50 px-2.5 py-3 text-[11px] leading-4 text-zinc-500;
+  @apply m-0 border-b px-2.5 py-3 text-[11px] leading-4;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
 }
 
 .workspace-diff-list {
@@ -785,15 +810,19 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-status-panel {
-  @apply border-b border-zinc-200 bg-zinc-50;
+  @apply border-b;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
 }
 
 .workspace-status-summary {
-  @apply px-2.5 py-2 border-b border-zinc-200;
+  @apply px-2.5 py-2 border-b;
+  border-color: var(--color-border-default);
 }
 
 .workspace-status-branch {
-  @apply m-0 text-[11px] leading-4 text-zinc-700;
+  @apply m-0 text-[11px] leading-4;
+  color: var(--color-text-secondary);
 }
 
 .workspace-status-summary-chips {
@@ -803,7 +832,10 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 .workspace-status-summary-chip,
 .workspace-status-blocker-chip,
 .workspace-status-item-tag {
-  @apply inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] leading-4 text-zinc-600;
+  @apply inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] leading-4;
+  border-color: var(--color-border-default);
+  background: var(--color-chip-bg);
+  color: var(--color-chip-text);
 }
 
 .workspace-status-blockers {
@@ -811,7 +843,8 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-status-blockers-title {
-  @apply m-0 text-[10px] leading-4 text-zinc-500;
+  @apply m-0 text-[10px] leading-4;
+  color: var(--color-text-muted);
 }
 
 .workspace-status-list {
@@ -819,7 +852,8 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-status-item {
-  @apply flex items-start justify-between gap-3 border-b border-zinc-200 px-2.5 py-2 last:border-b-0;
+  @apply flex items-start justify-between gap-3 border-b px-2.5 py-2 last:border-b-0;
+  border-color: var(--color-border-default);
 }
 
 .workspace-status-item-main {
@@ -827,7 +861,8 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-status-item-path {
-  @apply block text-[11px] leading-4 text-zinc-800 break-all;
+  @apply block text-[11px] leading-4 break-all;
+  color: var(--color-text-primary);
 }
 
 .workspace-status-item-tags {
@@ -835,19 +870,27 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-status-item-xy {
-  @apply shrink-0 text-[10px] leading-4 text-zinc-500 font-mono;
+  @apply shrink-0 text-[10px] leading-4 font-mono;
+  color: var(--color-text-muted);
 }
 
 .workspace-diff-item {
-  @apply border-b border-zinc-200 last:border-b-0;
+  @apply border-b last:border-b-0;
+  border-color: var(--color-border-default);
 }
 
 .workspace-diff-item-button {
-  @apply w-full px-2.5 py-1.5 text-left bg-zinc-100 hover:bg-zinc-200 transition flex items-center justify-between gap-3;
+  @apply w-full px-2.5 py-1.5 text-left transition flex items-center justify-between gap-3;
+  background: var(--color-bg-muted);
+}
+
+.workspace-diff-item-button:hover {
+  background: var(--color-bg-muted-hover);
 }
 
 .workspace-diff-item-path {
-  @apply text-[11px] leading-4 text-zinc-800 truncate;
+  @apply text-[11px] leading-4 truncate;
+  color: var(--color-text-primary);
 }
 
 .workspace-diff-item-stats {
@@ -855,7 +898,9 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .workspace-diff-item-body {
-  @apply m-0 border-t border-zinc-200 px-2 py-1.5 overflow-auto text-[11px] leading-4 bg-zinc-50;
+  @apply m-0 border-t px-2 py-1.5 overflow-auto text-[11px] leading-4;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-subtle);
 }
 
 .diff-lines {
@@ -872,11 +917,11 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 }
 
 .diff-line-add {
-  @apply bg-emerald-50;
+  background: var(--color-success-soft);
 }
 
 .diff-line-del {
-  @apply bg-rose-50;
+  background: var(--color-danger-soft);
 }
 
 .diff-line-ctx {
@@ -885,19 +930,22 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 
 .diff-ln-old,
 .diff-ln-new {
-  @apply text-right pr-1.5 text-[10px] leading-4 text-zinc-500 select-none border-r border-zinc-200;
+  @apply text-right pr-1.5 text-[10px] leading-4 select-none border-r;
+  color: var(--color-line-number);
+  border-color: var(--color-border-default);
 }
 
 .diff-line-add .diff-ln-new {
-  @apply text-emerald-700;
+  color: var(--color-success-text);
 }
 
 .diff-line-del .diff-ln-old {
-  @apply text-rose-700;
+  color: var(--color-danger-text);
 }
 
 .diff-line-text {
-  @apply px-1.5 text-[11px] leading-4 text-zinc-800 whitespace-pre;
+  @apply px-1.5 text-[11px] leading-4 whitespace-pre;
+  color: var(--color-text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
