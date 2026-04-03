@@ -540,6 +540,18 @@ const UI_TEXT = {
     zh: ({ duration }) => `耗时 ${String(duration)}`,
     en: ({ duration }) => `Worked for ${String(duration)}`,
   },
+  'threadConversation.copy': {
+    zh: '复制',
+    en: 'Copy',
+  },
+  'threadConversation.copied': {
+    zh: '已复制',
+    en: 'Copied',
+  },
+  'threadConversation.copyMessage': {
+    zh: '复制消息',
+    en: 'Copy message',
+  },
   'sidebar.expand': {
     zh: '展开侧边栏',
     en: 'Expand sidebar',
