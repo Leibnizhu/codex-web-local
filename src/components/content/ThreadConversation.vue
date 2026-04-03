@@ -84,7 +84,7 @@
       </li>
 
       <li
-        v-for="message in messages"
+        v-for="(message, messageIndex) in messages"
         :key="message.id"
         class="conversation-item"
         :data-role="message.role"
@@ -105,46 +105,36 @@
                 </li>
               </ul>
 
-              <article v-if="message.text.length > 0" class="message-card" :data-role="message.role">
-                <div v-if="message.messageType === 'worked'" class="worked-separator" aria-live="polite">
-                  <span class="worked-separator-line" aria-hidden="true" />
-                  <p class="worked-separator-text">{{ formatWorkedMessage(message.text) }}</p>
-                  <span class="worked-separator-line" aria-hidden="true" />
+              <div v-if="message.text.length > 0" class="message-card-shell" :data-role="message.role">
+                <div
+                  v-if="message.role === 'user' && readCopyPayloadAt(messageIndex)"
+                  class="message-copy-external"
+                >
+                  <button
+                    type="button"
+                    class="message-copy-button"
+                    :data-copied="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key"
+                    :aria-label="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key ? t('threadConversation.copied') : t('threadConversation.copyMessage')"
+                    :title="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key ? t('threadConversation.copied') : t('threadConversation.copy')"
+                    @click="onCopyMessage(messageIndex)"
+                  >
+                    <IconTablerCheck v-if="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key" class="icon-svg" />
+                    <IconTablerCopy v-else class="icon-svg" />
+                  </button>
                 </div>
-                <div v-else class="message-content">
-                  <template v-for="(block, blockIndex) in parseMessageBlocks(message.text)" :key="`block-${blockIndex}`">
-                    <template v-if="block.kind === 'text'">
-                      <template v-for="(part, partIndex) in parseTextParts(block.value)" :key="`part-${blockIndex}-${partIndex}`">
-                        <p v-if="part.kind === 'paragraph'" class="message-text">
-                          <template v-for="(segment, index) in parseInlineSegments(part.value, projectCwd)" :key="`seg-p-${blockIndex}-${partIndex}-${index}`">
-                            <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
-                            <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
-                            <a
-                              v-else-if="segment.kind === 'file'"
-                              class="message-file-link"
-                              :href="buildFileReferenceHref(segment)"
-                              @click.prevent="onFileReferenceClick(segment)"
-                            >
-                              {{ segment.displayName }}
-                            </a>
-                            <a
-                              v-else-if="segment.kind === 'markdownLink'"
-                              class="message-file-link"
-                              :href="segment.href"
-                              @click.prevent="onMarkdownLinkClick(segment)"
-                            >
-                              {{ segment.label }}
-                            </a>
-                            <code v-else class="message-inline-code">{{ segment.value }}</code>
-                          </template>
-                        </p>
-                        <ul v-else class="message-list">
-                          <li
-                            v-for="(item, itemIndex) in part.items"
-                            :key="`seg-l-${blockIndex}-${partIndex}-${itemIndex}`"
-                            class="message-list-item"
-                          >
-                            <template v-for="(segment, index) in parseInlineSegments(item, projectCwd)" :key="`seg-li-${blockIndex}-${partIndex}-${itemIndex}-${index}`">
+
+                <article class="message-card" :data-role="message.role">
+                  <div v-if="message.messageType === 'worked'" class="worked-separator" aria-live="polite">
+                    <span class="worked-separator-line" aria-hidden="true" />
+                    <p class="worked-separator-text">{{ formatWorkedMessage(message.text) }}</p>
+                    <span class="worked-separator-line" aria-hidden="true" />
+                  </div>
+                  <div v-else class="message-content">
+                    <template v-for="(block, blockIndex) in parseMessageBlocks(message.text)" :key="`block-${blockIndex}`">
+                      <template v-if="block.kind === 'text'">
+                        <template v-for="(part, partIndex) in parseTextParts(block.value)" :key="`part-${blockIndex}-${partIndex}`">
+                          <p v-if="part.kind === 'paragraph'" class="message-text">
+                            <template v-for="(segment, index) in parseInlineSegments(part.value, projectCwd)" :key="`seg-p-${blockIndex}-${partIndex}-${index}`">
                               <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
                               <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
                               <a
@@ -165,14 +155,59 @@
                               </a>
                               <code v-else class="message-inline-code">{{ segment.value }}</code>
                             </template>
-                          </li>
-                        </ul>
+                          </p>
+                          <ul v-else class="message-list">
+                            <li
+                              v-for="(item, itemIndex) in part.items"
+                              :key="`seg-l-${blockIndex}-${partIndex}-${itemIndex}`"
+                              class="message-list-item"
+                            >
+                              <template v-for="(segment, index) in parseInlineSegments(item, projectCwd)" :key="`seg-li-${blockIndex}-${partIndex}-${itemIndex}-${index}`">
+                                <span v-if="segment.kind === 'text'">{{ segment.value }}</span>
+                                <strong v-else-if="segment.kind === 'bold'" class="message-strong-text">{{ segment.value }}</strong>
+                                <a
+                                  v-else-if="segment.kind === 'file'"
+                                  class="message-file-link"
+                                  :href="buildFileReferenceHref(segment)"
+                                  @click.prevent="onFileReferenceClick(segment)"
+                                >
+                                  {{ segment.displayName }}
+                                </a>
+                                <a
+                                  v-else-if="segment.kind === 'markdownLink'"
+                                  class="message-file-link"
+                                  :href="segment.href"
+                                  @click.prevent="onMarkdownLinkClick(segment)"
+                                >
+                                  {{ segment.label }}
+                                </a>
+                                <code v-else class="message-inline-code">{{ segment.value }}</code>
+                              </template>
+                            </li>
+                          </ul>
+                        </template>
                       </template>
+                      <pre v-else class="message-code-block"><code class="message-code-body">{{ block.value }}</code></pre>
                     </template>
-                    <pre v-else class="message-code-block"><code class="message-code-body">{{ block.value }}</code></pre>
-                  </template>
-                </div>
-              </article>
+                    <div
+                      v-if="message.role !== 'user' && readCopyPayloadAt(messageIndex)"
+                      class="message-content-actions"
+                    >
+                      <button
+                        type="button"
+                        class="message-copy-button"
+                        :data-copied="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key"
+                        :aria-label="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key ? t('threadConversation.copied') : t('threadConversation.copyMessage')"
+                        :title="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key ? t('threadConversation.copied') : t('threadConversation.copy')"
+                        @click="onCopyMessage(messageIndex)"
+                      >
+                        <IconTablerCheck v-if="copiedMessageKey === readCopyPayloadAt(messageIndex)?.key" class="icon-svg" />
+                        <IconTablerCopy v-else class="icon-svg" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              </div>
             </article>
           </div>
         </div>
@@ -228,8 +263,11 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ThreadScrollState, UiMessage, UiServerRequest, UiTurnFileChanges } from '../../types/codex'
 import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
+import IconTablerCheck from '../icons/IconTablerCheck.vue'
+import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
 import { formatDisplayPath } from '../../utils/pathUtils'
+import { copyTextToClipboard, readMessageCopyPayload } from '../../utils/messageCopy'
 import {
   type InlineSegment,
   buildFileReferenceHrefFromValue,
@@ -262,6 +300,7 @@ const emit = defineEmits<{
 const conversationListRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 const modalImageUrl = ref('')
+const copiedMessageKey = ref<string | null>(null)
 const toolQuestionAnswers = ref<Record<string, string>>({})
 const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const BOTTOM_THRESHOLD_PX = 16
@@ -270,6 +309,7 @@ let scrollRestoreFrame = 0
 let bottomLockFrame = 0
 let bottomLockFramesLeft = 0
 let shouldForceBottomOnNextRestore = false
+let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
 
@@ -654,6 +694,32 @@ function displayFileChangePath(path: string): string {
   return formatDisplayPath(path, props.projectCwd)
 }
 
+function readCopyPayloadAt(messageIndex: number) {
+  const copyPayload = readMessageCopyPayload(props.messages, messageIndex)
+  return copyPayload
+}
+
+function clearCopiedMessageFeedback(): void {
+  if (copiedMessageResetTimer) {
+    clearTimeout(copiedMessageResetTimer)
+    copiedMessageResetTimer = null
+  }
+}
+
+async function onCopyMessage(messageIndex: number): Promise<void> {
+  const copyPayload = readCopyPayloadAt(messageIndex)
+  if (!copyPayload) return
+  const copied = await copyTextToClipboard(copyPayload.text)
+  if (!copied) return
+
+  copiedMessageKey.value = copyPayload.key
+  clearCopiedMessageFeedback()
+  copiedMessageResetTimer = setTimeout(() => {
+    copiedMessageKey.value = null
+    copiedMessageResetTimer = null
+  }, 1400)
+}
+
 onBeforeUnmount(() => {
   if (scrollRestoreFrame) {
     cancelAnimationFrame(scrollRestoreFrame)
@@ -661,6 +727,7 @@ onBeforeUnmount(() => {
   if (bottomLockFrame) {
     cancelAnimationFrame(bottomLockFrame)
   }
+  clearCopiedMessageFeedback()
 })
 </script>
 
@@ -955,6 +1022,59 @@ onBeforeUnmount(() => {
 .message-card[data-role='assistant'],
 .message-card[data-role='system'] {
   @apply px-0 py-0 bg-transparent border-none rounded-none;
+}
+
+.message-card-shell {
+  @apply flex flex-col max-w-full;
+}
+
+.message-card-shell[data-role='user'] {
+  @apply flex-row items-end gap-2;
+}
+
+.message-content-actions {
+  @apply flex items-center justify-start pt-1;
+}
+
+.message-copy-external {
+  @apply shrink-0 self-end pb-1;
+}
+
+.message-copy-button {
+  @apply inline-flex h-8 min-w-8 items-center justify-center rounded-full border px-2 transition;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  opacity: 0.78;
+}
+
+.message-copy-button:hover,
+.message-copy-button:focus-visible,
+.message-copy-button[data-copied='true'] {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  opacity: 1;
+}
+
+.message-copy-button:focus-visible {
+  outline: 2px solid var(--color-border-strong);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .message-copy-button {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .message-card-shell[data-role='user']:hover .message-copy-button,
+  .message-card-shell[data-role='user']:focus-within .message-copy-button,
+  .message-content:hover .message-copy-button,
+  .message-content:focus-within .message-copy-button,
+  .message-copy-button[data-copied='true'] {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .conversation-item[data-message-type='worked'] .message-stack,
