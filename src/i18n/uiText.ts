@@ -124,6 +124,10 @@ const UI_TEXT = {
     zh: ({ count }) => `${String(count)} 条授权待处理`,
     en: ({ count }) => `${String(count)} approval(s) pending`,
   },
+  'app.sharedSessionPendingApprovalsShort': {
+    zh: ({ count }) => `${String(count)} 条授权`,
+    en: ({ count }) => `${String(count)} approval(s)`,
+  },
   'app.sharedSessionReturnToOwner': {
     zh: '请返回控制端继续处理',
     en: 'Return to the owner client to continue',

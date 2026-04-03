@@ -14,8 +14,11 @@ test('SidebarThreadTree accepts shared snapshot mapping and renders unified owne
   assert.match(tree, /thread-row-shared-summary/)
   assert.match(tree, /readSharedSessionThreadSummary/)
   assert.match(tree, /readSharedSessionThreadSummaryState/)
+  assert.match(tree, /readSharedSessionPendingApprovalsLabel/)
   assert.match(tree, /ownerLabel/)
   assert.match(tree, /stateLabel/)
+  assert.match(tree, /pendingApprovalsLabel/)
+  assert.match(tree, /`\$\{ownerLabel\} · \$\{stateLabel\} · \$\{pendingApprovalsLabel\}`/)
 })
 
 test('App passes shared snapshot mapping into SidebarThreadTree', async () => {
@@ -23,4 +26,11 @@ test('App passes shared snapshot mapping into SidebarThreadTree', async () => {
 
   assert.match(app, /sharedSessionSnapshotByThreadId/)
   assert.match(app, /:shared-session-snapshot-by-thread-id="sharedSessionSnapshotByThreadId"/)
+})
+
+test('uiText defines short pending approvals copy for sidebar summaries', async () => {
+  const uiText = await read('../src/i18n/uiText.ts')
+
+  assert.match(uiText, /'app\.sharedSessionPendingApprovalsShort'/)
+  assert.match(uiText, /`\$\{String\(count\)\} 条授权`/)
 })
