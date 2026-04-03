@@ -1123,10 +1123,20 @@ function readSharedSessionThreadSummaryState(threadId: string): string {
   return props.sharedSessionSnapshotByThreadId[threadId]?.state ?? ''
 }
 
+function readSharedSessionPendingApprovalsLabel(threadId: string): string {
+  const pendingApprovalCount = props.sharedSessionSnapshotByThreadId[threadId]?.attention.pendingApprovalCount ?? 0
+  if (pendingApprovalCount <= 0) return ''
+  return t('app.sharedSessionPendingApprovalsShort', { count: pendingApprovalCount })
+}
+
 function readSharedSessionThreadSummary(threadId: string): string {
   const ownerLabel = readSharedSessionOwnerLabel(threadId)
   const stateLabel = readSharedSessionStateLabel(threadId)
+  const pendingApprovalsLabel = readSharedSessionPendingApprovalsLabel(threadId)
   if (!ownerLabel || !stateLabel) return ''
+  if (pendingApprovalsLabel) {
+    return `${ownerLabel} · ${stateLabel} · ${pendingApprovalsLabel}`
+  }
   return `${ownerLabel} · ${stateLabel}`
 }
 
