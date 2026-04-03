@@ -492,6 +492,46 @@ const UI_TEXT = {
     zh: '当前会话还没有消息',
     en: 'No messages in this thread yet.',
   },
+  'threadConversation.approvalCommandTitle': {
+    zh: '是否允许执行此命令？',
+    en: 'Allow this command to run?',
+  },
+  'threadConversation.approvalFileTitle': {
+    zh: '是否允许应用这些文件改动？',
+    en: 'Allow these file changes?',
+  },
+  'threadConversation.approvalSubmit': {
+    zh: '提交',
+    en: 'Submit',
+  },
+  'threadConversation.approvalSkip': {
+    zh: '跳过',
+    en: 'Skip',
+  },
+  'threadConversation.approvalCwdLabel': {
+    zh: '执行目录',
+    en: 'Working directory',
+  },
+  'threadConversation.approvalReasonLabel': {
+    zh: '触发原因',
+    en: 'Reason',
+  },
+  'threadConversation.approvalSummaryLabel': {
+    zh: '预计操作',
+    en: 'Planned actions',
+  },
+  'threadConversation.approvalGrantRootLabel': {
+    zh: '授权目录',
+    en: 'Granted root',
+  },
+  'threadConversation.approvalFileSummary': {
+    zh: ({ count, additions, deletions }) => `共 ${String(count)} 个文件，+${String(additions)} / -${String(deletions)}`,
+    en: ({ count, additions, deletions }) => `${String(count)} files, +${String(additions)} / -${String(deletions)}`,
+  },
+  'threadConversation.approvalOpenDiff': {
+    zh: '查看完整 Diff',
+    en: 'Open full diff',
+  },
   'threadConversation.otherAnswer': {
     zh: '其他答案',
     en: 'Other answer',
