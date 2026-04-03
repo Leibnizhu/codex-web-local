@@ -80,6 +80,62 @@ const UI_TEXT = {
     zh: ({ time }) => `排队于 ${String(time)}`,
     en: ({ time }) => `Queued at ${String(time)}`,
   },
+  'app.sharedSessionStatusIdle': {
+    zh: '已同步',
+    en: 'Synced',
+  },
+  'app.sharedSessionStatusRunning': {
+    zh: '正在继续',
+    en: 'Running',
+  },
+  'app.sharedSessionStatusNeedsAttention': {
+    zh: '等待处理',
+    en: 'Needs attention',
+  },
+  'app.sharedSessionStatusFailed': {
+    zh: '本轮失败',
+    en: 'Failed',
+  },
+  'app.sharedSessionStatusInterrupted': {
+    zh: '已中断',
+    en: 'Interrupted',
+  },
+  'app.sharedSessionStatusStaleOwner': {
+    zh: '控制端可能过期',
+    en: 'Owner may be stale',
+  },
+  'app.sharedSessionOwnerWeb': {
+    zh: 'Web',
+    en: 'Web',
+  },
+  'app.sharedSessionOwnerTerminal': {
+    zh: '终端',
+    en: 'Terminal',
+  },
+  'app.sharedSessionControlledBy': {
+    zh: ({ owner }) => `当前由 ${String(owner)} 控制`,
+    en: ({ owner }) => `Currently controlled by ${String(owner)}`,
+  },
+  'app.sharedSessionLatestTurn': {
+    zh: '最近进展已同步',
+    en: 'Latest progress synced',
+  },
+  'app.sharedSessionPendingApprovals': {
+    zh: ({ count }) => `${String(count)} 条授权待处理`,
+    en: ({ count }) => `${String(count)} approval(s) pending`,
+  },
+  'app.sharedSessionReturnToOwner': {
+    zh: '请返回控制端继续处理',
+    en: 'Return to the owner client to continue',
+  },
+  'app.sharedSessionActiveTurn': {
+    zh: '活动 Turn',
+    en: 'Active turn',
+  },
+  'app.sharedSessionLatestError': {
+    zh: ({ message }) => `最近错误：${String(message)}`,
+    en: ({ message }) => `Latest error: ${String(message)}`,
+  },
   'composer.model': {
     zh: '模型',
     en: 'Model',

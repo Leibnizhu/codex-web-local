@@ -18,7 +18,16 @@
               </span>
             </template>
             <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
-              <span class="thread-row-title">{{ thread.title }}</span>
+              <span class="thread-row-text">
+                <span class="thread-row-title">{{ thread.title }}</span>
+                <span
+                  v-if="readSharedSessionThreadSummary(thread.id)"
+                  class="thread-row-shared-summary"
+                  :data-state="readSharedSessionThreadSummaryState(thread.id)"
+                >
+                  {{ readSharedSessionThreadSummary(thread.id) }}
+                </span>
+              </span>
             </button>
             <template #right>
               <span class="thread-row-time">{{ formatRelative(thread.createdAtIso || thread.updatedAtIso) }}</span>
@@ -201,7 +210,16 @@
                   </span>
                 </template>
                 <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
-                  <span class="thread-row-title">{{ thread.title }}</span>
+                  <span class="thread-row-text">
+                    <span class="thread-row-title">{{ thread.title }}</span>
+                    <span
+                      v-if="readSharedSessionThreadSummary(thread.id)"
+                      class="thread-row-shared-summary"
+                      :data-state="readSharedSessionThreadSummaryState(thread.id)"
+                    >
+                      {{ readSharedSessionThreadSummary(thread.id) }}
+                    </span>
+                  </span>
                 </button>
                 <template #right>
                   <span class="thread-row-time">{{ formatRelative(thread.createdAtIso || thread.updatedAtIso) }}</span>
@@ -287,7 +305,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
-import type { UiProjectGroup, UiThread } from '../../types/codex'
+import type { UiProjectGroup, UiSharedSessionSnapshot, UiThread } from '../../types/codex'
 import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 import IconTablerArchive from '../icons/IconTablerArchive.vue'
 import IconTablerCheck from '../icons/IconTablerCheck.vue'
@@ -311,6 +329,7 @@ const props = defineProps<{
   selectedThreadId: string
   isLoading: boolean
   searchQuery: string
+  sharedSessionSnapshotByThreadId: Record<string, UiSharedSessionSnapshot>
   uiLanguage?: UiLanguage
 }>()
 
@@ -1072,6 +1091,45 @@ function getThreadState(thread: UiThread): 'working' | 'unread' | 'idle' {
   return 'idle'
 }
 
+function readSharedSessionOwnerLabel(threadId: string): string {
+  const snapshot = props.sharedSessionSnapshotByThreadId[threadId]
+  if (!snapshot) return ''
+  return snapshot.owner === 'terminal'
+    ? t('app.sharedSessionOwnerTerminal')
+    : t('app.sharedSessionOwnerWeb')
+}
+
+function readSharedSessionStateLabel(threadId: string): string {
+  const snapshot = props.sharedSessionSnapshotByThreadId[threadId]
+  if (!snapshot) return ''
+
+  switch (snapshot.state) {
+    case 'running':
+      return t('app.sharedSessionStatusRunning')
+    case 'needs_attention':
+      return t('app.sharedSessionStatusNeedsAttention')
+    case 'failed':
+      return t('app.sharedSessionStatusFailed')
+    case 'interrupted':
+      return t('app.sharedSessionStatusInterrupted')
+    case 'stale_owner':
+      return t('app.sharedSessionStatusStaleOwner')
+    default:
+      return t('app.sharedSessionStatusIdle')
+  }
+}
+
+function readSharedSessionThreadSummaryState(threadId: string): string {
+  return props.sharedSessionSnapshotByThreadId[threadId]?.state ?? ''
+}
+
+function readSharedSessionThreadSummary(threadId: string): string {
+  const ownerLabel = readSharedSessionOwnerLabel(threadId)
+  const stateLabel = readSharedSessionStateLabel(threadId)
+  if (!ownerLabel || !stateLabel) return ''
+  return `${ownerLabel} · ${stateLabel}`
+}
+
 watch(
   () => props.groups.map((group) => group.projectName),
   (projectNames) => {
@@ -1340,7 +1398,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-row {
-  @apply h-8;
+  @apply min-h-8 py-1;
 }
 
 .thread-row:hover {
@@ -1357,12 +1415,33 @@ onBeforeUnmount(() => {
 }
 
 .thread-main-button {
-  @apply min-w-0 w-full text-left rounded px-0 py-0 flex items-center h-5;
+  @apply min-w-0 w-full text-left rounded px-0 py-0 flex items-center;
+}
+
+.thread-row-text {
+  @apply min-w-0 flex flex-col items-start justify-center;
 }
 
 .thread-row-title {
   @apply block text-sm leading-5 font-normal truncate whitespace-nowrap;
   color: var(--color-text-primary);
+}
+
+.thread-row-shared-summary {
+  @apply block text-[11px] leading-4 truncate whitespace-nowrap;
+  color: var(--color-text-muted);
+}
+
+.thread-row-shared-summary[data-state='running'] {
+  color: #166534;
+}
+
+.thread-row-shared-summary[data-state='needs_attention'] {
+  color: #b45309;
+}
+
+.thread-row-shared-summary[data-state='failed'] {
+  color: #b91c1c;
 }
 
 .thread-status-indicator {

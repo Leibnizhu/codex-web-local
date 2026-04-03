@@ -51,6 +51,7 @@
           v-if="!isSidebarCollapsed"
           :selected-thread-id="selectedThreadId" :is-loading="isLoadingThreads"
           :search-query="sidebarSearchQuery"
+          :shared-session-snapshot-by-thread-id="sharedSessionSnapshotByThreadId"
           :ui-language="uiLanguage"
           @select="onSelectThread"
           @archive="onArchiveThread" @start-new-thread="onStartNewThread" @rename-thread="onRenameThread" @rename-project="onRenameProject"
@@ -152,18 +153,25 @@
           <template v-else>
             <div class="content-grid content-grid-thread" :class="{ 'content-grid-thread-has-preview': previewPanel !== null }">
               <div class="content-thread">
-                <ThreadConversation :messages="filteredMessages" :is-loading="isLoadingMessages"
-                  :active-thread-id="composerThreadContextId" :scroll-state="selectedThreadScrollState"
-                  :project-cwd="selectedThread?.cwd ?? ''"
-                  :file-changes="selectedThreadFileChanges"
-                  :ui-language="uiLanguage"
-                  :is-thinking-indicator-visible="isThinkingIndicatorVisible"
-                  :pending-requests="selectedThreadServerRequests"
-                  @update-scroll-state="onUpdateThreadScrollState"
-                  @respond-server-request="onRespondServerRequest"
-                  @open-file-reference="onOpenFileReference"
-                  @open-file-diff="onOpenFileDiff"
-                  @open-workspace-diff="onOpenWorkspaceDiff" />
+                <div class="content-thread-stack">
+                  <SharedSessionStatusCard
+                    v-if="selectedSharedSessionSnapshot"
+                    :snapshot="selectedSharedSessionSnapshot"
+                    :ui-language="uiLanguage"
+                  />
+                  <ThreadConversation :messages="filteredMessages" :is-loading="isLoadingMessages"
+                    :active-thread-id="composerThreadContextId" :scroll-state="selectedThreadScrollState"
+                    :project-cwd="selectedThread?.cwd ?? ''"
+                    :file-changes="selectedThreadFileChanges"
+                    :ui-language="uiLanguage"
+                    :is-thinking-indicator-visible="isThinkingIndicatorVisible"
+                    :pending-requests="selectedThreadServerRequests"
+                    @update-scroll-state="onUpdateThreadScrollState"
+                    @respond-server-request="onRespondServerRequest"
+                    @open-file-reference="onOpenFileReference"
+                    @open-file-diff="onOpenFileDiff"
+                    @open-workspace-diff="onOpenWorkspaceDiff" />
+                </div>
               </div>
 
               <CodePreviewPanel
@@ -249,6 +257,7 @@ import { useRoute, useRouter } from 'vue-router'
 import DesktopLayout from './components/layout/DesktopLayout.vue'
 import SidebarThreadTree from './components/sidebar/SidebarThreadTree.vue'
 import ContentHeader from './components/content/ContentHeader.vue'
+import SharedSessionStatusCard from './components/content/SharedSessionStatusCard.vue'
 import ThreadConversation from './components/content/ThreadConversation.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
 import ComposerDropdown from './components/content/ComposerDropdown.vue'
@@ -279,6 +288,7 @@ const {
   selectedThread,
   selectedThreadScrollState,
   selectedThreadServerRequests,
+  selectedSharedSessionSnapshot,
   selectedWorkspacePersistedServerRequests,
   globalLiveServerRequests,
   globalPersistedServerRequests,
@@ -291,6 +301,7 @@ const {
   selectedThreadRateLimitUsage,
   isCompactingSelectedThreadContext,
   selectedLiveOverlay,
+  sharedSessionSnapshotByThreadId,
   selectedThreadId,
   availableModelIds,
   selectedModelId,
@@ -1110,6 +1121,14 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
 }
 
 .content-thread {
+  @apply flex-1 min-h-0;
+}
+
+.content-thread-stack {
+  @apply h-full min-h-0 flex flex-col gap-3;
+}
+
+.content-thread-stack :deep(.conversation-root) {
   @apply flex-1 min-h-0;
 }
 
