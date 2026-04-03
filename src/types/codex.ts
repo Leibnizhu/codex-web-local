@@ -154,6 +154,80 @@ export type UiLiveOverlay = {
   errorText: string
 }
 
+export type UiSharedSessionOwner = 'web' | 'terminal'
+
+export type UiSharedSessionState =
+  | 'idle'
+  | 'running'
+  | 'needs_attention'
+  | 'failed'
+  | 'interrupted'
+  | 'stale_owner'
+
+export type UiSharedSessionApprovalKind = 'command' | 'file_change' | 'other'
+
+export type UiSharedSessionTimelineEntry =
+  | {
+      id: string
+      kind: 'user_message'
+      text: string
+      createdAtIso: string
+    }
+  | {
+      id: string
+      kind: 'assistant_message'
+      text: string
+      createdAtIso: string
+    }
+  | {
+      id: string
+      kind: 'turn_summary'
+      text: string
+      createdAtIso: string
+      turnId: string
+      status: 'completed' | 'failed' | 'interrupted'
+    }
+  | {
+      id: string
+      kind: 'attention'
+      text: string
+      createdAtIso: string
+      attentionKind: 'approval' | 'error'
+    }
+
+export type UiSharedSessionSnapshot = {
+  sessionId: string
+  sourceThreadId: string
+  sourceConversationId: string | null
+  title: string
+  cwd: string | null
+  owner: UiSharedSessionOwner
+  ownerInstanceId: string | null
+  ownerLeaseExpiresAtIso: string | null
+  state: UiSharedSessionState
+  activeTurnId: string | null
+  updatedAtIso: string
+  timeline: UiSharedSessionTimelineEntry[]
+  latestTurnSummary: {
+    turnId: string
+    status: 'running' | 'completed' | 'failed' | 'interrupted'
+    summary: string | null
+    startedAtIso: string | null
+    completedAtIso: string | null
+  } | null
+  attention: {
+    pendingApprovalCount: number
+    pendingApprovalKinds: UiSharedSessionApprovalKind[]
+    latestErrorMessage: string | null
+    requiresReturnToOwner: boolean
+  }
+  capabilities: {
+    canViewHistory: boolean
+    canRequestTakeover: boolean
+    canApproveInCurrentClient: boolean
+  }
+}
+
 export type UiProjectGroup = {
   projectName: string
   threads: UiThread[]

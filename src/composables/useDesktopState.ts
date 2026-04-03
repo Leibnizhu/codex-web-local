@@ -13,6 +13,7 @@ import {
   getCurrentModelConfig,
   getModelReasoningSupport,
   getPersistedServerRequests,
+  getSharedSessionSnapshots,
   getThreadConversationData,
   getPendingServerRequests,
   interruptThreadTurn,
@@ -38,6 +39,7 @@ import type {
     UiMessage,
     UiPersistedServerRequest,
     UiProjectGroup,
+    UiSharedSessionSnapshot,
   UiServerRequest,
   UiServerRequestReply,
   UiThread,
@@ -248,6 +250,7 @@ export function useDesktopState() {
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
   const persistedServerRequestsByThreadId = ref<Record<string, UiPersistedServerRequest[]>>({})
+  const sharedSessionSnapshots = ref<UiSharedSessionSnapshot[]>([])
   const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>({})
   const queuedMessagesByThreadId = ref<Record<string, QueuedMessageState[]>>({})
   const contextUsageByThreadId = ref<Record<string, UiThreadContextUsage>>(loadThreadContextUsageMap())
@@ -314,6 +317,30 @@ export function useDesktopState() {
   })
   const globalPersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
     return persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+  })
+  const sharedSessionSnapshotBySessionId = computed<Record<string, UiSharedSessionSnapshot>>(() => {
+    const next: Record<string, UiSharedSessionSnapshot> = {}
+    for (const snapshot of sharedSessionSnapshots.value) {
+      if (!snapshot.sessionId) continue
+      next[snapshot.sessionId] = snapshot
+    }
+    return next
+  })
+  const sharedSessionSnapshotByThreadId = computed<Record<string, UiSharedSessionSnapshot>>(() => {
+    const next: Record<string, UiSharedSessionSnapshot> = {}
+    for (const snapshot of sharedSessionSnapshots.value) {
+      const threadId = snapshot.sourceThreadId.trim()
+      if (!threadId || next[threadId]) continue
+      next[threadId] = snapshot
+    }
+    return next
+  })
+  const selectedSharedSessionSnapshot = computed<UiSharedSessionSnapshot | null>(() => {
+    const threadId = selectedThreadId.value.trim()
+    if (!threadId) return null
+    return sharedSessionSnapshotByThreadId.value[threadId]
+      ?? sharedSessionSnapshotBySessionId.value[threadId]
+      ?? null
   })
   const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
     const threadId = selectedThreadId.value
@@ -1402,6 +1429,18 @@ export function useDesktopState() {
     syncWorkspaceBranchBlockedReasons()
   }
 
+  function replaceSharedSessionSnapshots(rows: UiSharedSessionSnapshot[]): void {
+    const bySessionId = new Map<string, UiSharedSessionSnapshot>()
+    for (const row of rows) {
+      const sessionId = row.sessionId.trim()
+      if (!sessionId) continue
+      bySessionId.set(sessionId, row)
+    }
+    sharedSessionSnapshots.value = Array.from(bySessionId.values()).sort((first, second) =>
+      second.updatedAtIso.localeCompare(first.updatedAtIso),
+    )
+  }
+
   function removePersistedServerRequestById(requestId: number): void {
     const next: Record<string, UiPersistedServerRequest[]> = {}
     for (const [threadId, requests] of Object.entries(persistedServerRequestsByThreadId.value)) {
@@ -1419,6 +1458,7 @@ export function useDesktopState() {
       const request = normalizeServerRequest(notification.params, GLOBAL_SERVER_REQUEST_SCOPE)
       if (!request) return true
       upsertPendingServerRequest(request)
+      void refreshSharedSessionSnapshots({ silent: true })
       return true
     }
 
@@ -1429,6 +1469,7 @@ export function useDesktopState() {
         removePendingServerRequestById(id)
         removePersistedServerRequestById(id)
       }
+      void refreshSharedSessionSnapshots({ silent: true })
       return true
     }
 
@@ -1779,6 +1820,7 @@ export function useDesktopState() {
         loadThreads(),
         refreshModelPreferences(),
         refreshRateLimitUsage({ force: true }),
+        refreshSharedSessionSnapshots({ silent: true }),
       ])
       await loadMessages(selectedThreadId.value)
       await refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
@@ -2092,6 +2134,7 @@ export function useDesktopState() {
     isPolling.value = true
 
     try {
+      await refreshSharedSessionSnapshots({ silent: true })
       const now = Date.now()
       const shouldRefreshThreadList = now - lastThreadListRefreshAtMs >= THREAD_LIST_AUTO_REFRESH_INTERVAL_MS
       if (shouldRefreshThreadList) {
@@ -2171,6 +2214,7 @@ export function useDesktopState() {
     if (isAutoRefreshEnabled.value) {
       startAutoRefreshTimer()
     }
+    void refreshSharedSessionSnapshots({ silent: true })
     void loadPendingServerRequestsFromBridge()
     void loadPersistedServerRequestsFromBridge()
     stopNotificationStream = subscribeCodexNotifications((notification) => {
@@ -2203,6 +2247,16 @@ export function useDesktopState() {
     }
   }
 
+  async function refreshSharedSessionSnapshots(options: { silent?: boolean } = {}): Promise<void> {
+    try {
+      const rows = await getSharedSessionSnapshots()
+      replaceSharedSessionSnapshots(rows)
+    } catch (unknownError) {
+      if (options.silent === true) return
+      error.value = unknownError instanceof Error ? unknownError.message : 'Failed to load shared session snapshots'
+    }
+  }
+
   async function respondToPendingServerRequest(reply: UiServerRequestReply): Promise<void> {
     try {
       await replyToServerRequest(reply.id, {
@@ -2226,6 +2280,9 @@ export function useDesktopState() {
       const dismissedIds = await dismissPersistedServerRequestsRequest(normalizedRequestIds)
       for (const requestId of dismissedIds) {
         removePersistedServerRequestById(requestId)
+      }
+      if (dismissedIds.length > 0) {
+        void refreshSharedSessionSnapshots({ silent: true })
       }
       return dismissedIds.length > 0
     } catch (unknownError) {
@@ -2315,6 +2372,9 @@ export function useDesktopState() {
     selectedWorkspacePersistedServerRequests,
     globalLiveServerRequests,
     globalPersistedServerRequests,
+    sharedSessionSnapshots,
+    sharedSessionSnapshotByThreadId,
+    selectedSharedSessionSnapshot,
     selectedWorkspaceModel,
     selectedWorkspaceDiffTotals,
     selectedThreadFileChanges,
@@ -2359,6 +2419,7 @@ export function useDesktopState() {
     setSelectedChatMode,
     respondToPendingServerRequest,
     dismissPersistedServerRequests,
+    refreshSharedSessionSnapshots,
     renameProject,
     removeProject,
     reorderProject,

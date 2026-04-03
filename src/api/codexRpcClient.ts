@@ -265,6 +265,62 @@ export async function fetchPersistedServerRequests(): Promise<unknown[]> {
   return Array.isArray(data) ? data : []
 }
 
+export async function fetchSharedSessionSnapshots(): Promise<unknown[]> {
+  const response = await fetch('/codex-api/shared-sessions')
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Shared session snapshots failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'shared-sessions/list',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data) ? data : []
+}
+
+export async function fetchSharedSessionSnapshot(sessionId: string): Promise<unknown | null> {
+  const normalizedSessionId = sessionId.trim()
+  if (!normalizedSessionId) {
+    return null
+  }
+
+  const response = await fetch(`/codex-api/shared-sessions/${encodeURIComponent(normalizedSessionId)}`)
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Shared session ${normalizedSessionId} failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'shared-sessions/read',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  return record?.data ?? null
+}
+
 export async function fetchWorkspaceDiffMode(
   cwd: string,
   mode: string,
