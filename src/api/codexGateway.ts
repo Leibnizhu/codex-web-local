@@ -4,6 +4,8 @@ import {
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
   fetchPendingServerRequests,
+  fetchSharedSessionSnapshot as fetchSharedSessionSnapshotRequest,
+  fetchSharedSessionSnapshots as fetchSharedSessionSnapshotsRequest,
   fetchWorkspaceDiffMode as fetchWorkspaceDiffModeRequest,
   rpcCall,
   respondServerRequest,
@@ -33,6 +35,11 @@ import type {
   UiMessage,
   UiPersistedServerRequest,
   UiProjectGroup,
+  UiSharedSessionApprovalKind,
+  UiSharedSessionOwner,
+  UiSharedSessionSnapshot,
+  UiSharedSessionState,
+  UiSharedSessionTimelineEntry,
   UiWorkspaceDirtyEntry,
   UiWorkspaceDirtyKind,
   UiWorkspaceDirtySummary,
@@ -257,6 +264,176 @@ function normalizeWorkspaceDiffMode(value: unknown): UiWorkspaceDiffMode {
     : 'unstaged'
 }
 
+function normalizeSharedSessionOwner(value: unknown): UiSharedSessionOwner {
+  return value === 'terminal' ? 'terminal' : 'web'
+}
+
+function normalizeSharedSessionState(value: unknown): UiSharedSessionState {
+  const allowed: UiSharedSessionState[] = [
+    'idle',
+    'running',
+    'needs_attention',
+    'failed',
+    'interrupted',
+    'stale_owner',
+  ]
+  return typeof value === 'string' && allowed.includes(value as UiSharedSessionState)
+    ? (value as UiSharedSessionState)
+    : 'idle'
+}
+
+function normalizeSharedSessionApprovalKind(value: unknown): UiSharedSessionApprovalKind {
+  const allowed: UiSharedSessionApprovalKind[] = ['command', 'file_change', 'other']
+  return typeof value === 'string' && allowed.includes(value as UiSharedSessionApprovalKind)
+    ? (value as UiSharedSessionApprovalKind)
+    : 'other'
+}
+
+function normalizeSharedSessionTimelineEntries(value: unknown): UiSharedSessionTimelineEntry[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry): UiSharedSessionTimelineEntry | null => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Record<string, unknown>
+      const id = typeof row.id === 'string' ? row.id.trim() : ''
+      const text = typeof row.text === 'string' ? row.text.trim() : ''
+      const createdAtIso = typeof row.createdAtIso === 'string' ? row.createdAtIso.trim() : ''
+      const kind = typeof row.kind === 'string' ? row.kind.trim() : ''
+      if (!id || !text || !createdAtIso) return null
+
+      if (kind === 'user_message' || kind === 'assistant_message') {
+        return {
+          id,
+          kind,
+          text,
+          createdAtIso,
+        }
+      }
+
+      if (kind === 'turn_summary') {
+        const turnId = typeof row.turnId === 'string' ? row.turnId.trim() : ''
+        const status = row.status
+        if (!turnId) return null
+        if (status !== 'completed' && status !== 'failed' && status !== 'interrupted') return null
+        return {
+          id,
+          kind,
+          text,
+          createdAtIso,
+          turnId,
+          status,
+        }
+      }
+
+      if (kind === 'attention') {
+        const attentionKind = row.attentionKind
+        if (attentionKind !== 'approval' && attentionKind !== 'error') return null
+        return {
+          id,
+          kind,
+          text,
+          createdAtIso,
+          attentionKind,
+        }
+      }
+
+      return null
+    })
+    .filter((entry): entry is UiSharedSessionTimelineEntry => entry !== null)
+}
+
+function normalizeSharedSessionSnapshot(value: unknown): UiSharedSessionSnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const sessionId = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
+  const sourceThreadId = typeof row.sourceThreadId === 'string' ? row.sourceThreadId.trim() : ''
+  const updatedAtIso = typeof row.updatedAtIso === 'string' ? row.updatedAtIso.trim() : ''
+  if (!sessionId || !sourceThreadId || !updatedAtIso) return null
+
+  const title = typeof row.title === 'string' && row.title.trim().length > 0
+    ? row.title.trim()
+    : sessionId
+  const latestTurnSummaryRow =
+    row.latestTurnSummary && typeof row.latestTurnSummary === 'object' && !Array.isArray(row.latestTurnSummary)
+      ? (row.latestTurnSummary as Record<string, unknown>)
+      : null
+  const latestTurnSummary = latestTurnSummaryRow
+    ? (() => {
+        const turnId = typeof latestTurnSummaryRow.turnId === 'string' ? latestTurnSummaryRow.turnId.trim() : ''
+        const status = latestTurnSummaryRow.status
+        if (!turnId) return null
+        if (status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'interrupted') {
+          return null
+        }
+        const normalizedStatus: 'running' | 'completed' | 'failed' | 'interrupted' = status
+        return {
+          turnId,
+          status: normalizedStatus,
+          summary: typeof latestTurnSummaryRow.summary === 'string' && latestTurnSummaryRow.summary.trim().length > 0
+            ? latestTurnSummaryRow.summary.trim()
+            : null,
+          startedAtIso: typeof latestTurnSummaryRow.startedAtIso === 'string' && latestTurnSummaryRow.startedAtIso.trim().length > 0
+            ? latestTurnSummaryRow.startedAtIso.trim()
+            : null,
+          completedAtIso: typeof latestTurnSummaryRow.completedAtIso === 'string' && latestTurnSummaryRow.completedAtIso.trim().length > 0
+            ? latestTurnSummaryRow.completedAtIso.trim()
+            : null,
+        }
+      })()
+    : null
+
+  const attentionRow =
+    row.attention && typeof row.attention === 'object' && !Array.isArray(row.attention)
+      ? (row.attention as Record<string, unknown>)
+      : {}
+  const capabilitiesRow =
+    row.capabilities && typeof row.capabilities === 'object' && !Array.isArray(row.capabilities)
+      ? (row.capabilities as Record<string, unknown>)
+      : {}
+
+  return {
+    sessionId,
+    sourceThreadId,
+    sourceConversationId: typeof row.sourceConversationId === 'string' && row.sourceConversationId.trim().length > 0
+      ? row.sourceConversationId.trim()
+      : null,
+    title,
+    cwd: typeof row.cwd === 'string' && row.cwd.trim().length > 0 ? row.cwd.trim() : null,
+    owner: normalizeSharedSessionOwner(row.owner),
+    ownerInstanceId: typeof row.ownerInstanceId === 'string' && row.ownerInstanceId.trim().length > 0
+      ? row.ownerInstanceId.trim()
+      : null,
+    ownerLeaseExpiresAtIso: typeof row.ownerLeaseExpiresAtIso === 'string' && row.ownerLeaseExpiresAtIso.trim().length > 0
+      ? row.ownerLeaseExpiresAtIso.trim()
+      : null,
+    state: normalizeSharedSessionState(row.state),
+    activeTurnId: typeof row.activeTurnId === 'string' && row.activeTurnId.trim().length > 0
+      ? row.activeTurnId.trim()
+      : null,
+    updatedAtIso,
+    timeline: normalizeSharedSessionTimelineEntries(row.timeline),
+    latestTurnSummary,
+    attention: {
+      pendingApprovalCount:
+        typeof attentionRow.pendingApprovalCount === 'number' && Number.isFinite(attentionRow.pendingApprovalCount)
+          ? Math.max(0, Math.trunc(attentionRow.pendingApprovalCount))
+          : 0,
+      pendingApprovalKinds: Array.isArray(attentionRow.pendingApprovalKinds)
+        ? attentionRow.pendingApprovalKinds.map((value) => normalizeSharedSessionApprovalKind(value))
+        : [],
+      latestErrorMessage: typeof attentionRow.latestErrorMessage === 'string' && attentionRow.latestErrorMessage.trim().length > 0
+        ? attentionRow.latestErrorMessage.trim()
+        : null,
+      requiresReturnToOwner: attentionRow.requiresReturnToOwner === true,
+    },
+    capabilities: {
+      canViewHistory: capabilitiesRow.canViewHistory !== false,
+      canRequestTakeover: capabilitiesRow.canRequestTakeover === true,
+      canApproveInCurrentClient: capabilitiesRow.canApproveInCurrentClient === true,
+    },
+  }
+}
+
 function normalizeChangedFiles(value: unknown): UiWorkspaceDiffSnapshot['files'] {
   if (!Array.isArray(value)) return []
   return value
@@ -426,6 +603,18 @@ export async function getPersistedServerRequests(): Promise<UiPersistedServerReq
   return rows
     .map((row) => normalizePersistedServerRequest(row))
     .filter((row): row is UiPersistedServerRequest => row !== null)
+}
+
+export async function getSharedSessionSnapshots(): Promise<UiSharedSessionSnapshot[]> {
+  const rows = await fetchSharedSessionSnapshotsRequest()
+  return rows
+    .map((row) => normalizeSharedSessionSnapshot(row))
+    .filter((row): row is UiSharedSessionSnapshot => row !== null)
+}
+
+export async function getSharedSessionSnapshot(sessionId: string): Promise<UiSharedSessionSnapshot | null> {
+  const row = await fetchSharedSessionSnapshotRequest(sessionId)
+  return normalizeSharedSessionSnapshot(row)
 }
 
 export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {

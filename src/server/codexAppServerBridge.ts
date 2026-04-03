@@ -4,6 +4,23 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
+// @ts-ignore - tests import this TypeScript module directly via node:test.
+import type { ThreadReadResponse } from '../api/appServerDtos.ts'
+import {
+  normalizeActiveTurnIdV2,
+  normalizeThreadInProgressV2,
+  normalizeThreadMessagesV2,
+// @ts-ignore - tests import this TypeScript module directly via node:test.
+} from '../api/normalizers/v2.ts'
+// @ts-ignore - tests import this TypeScript module directly via node:test.
+import { buildSharedSessionSnapshot } from './sharedSessionProjector.ts'
+import {
+  listSharedSessionSnapshots,
+  readSharedSessionSnapshot,
+  writeSharedSessionSnapshot,
+// @ts-ignore - tests import this TypeScript module directly via node:test.
+} from './sharedSessionStore.ts'
+
 type JsonRpcCall = {
   jsonrpc: '2.0'
   id: number
@@ -40,6 +57,7 @@ type PendingServerRequest = {
   method: string
   params: unknown
   receivedAtIso: string
+  threadId: string
 }
 
 type PersistedServerRequest = {
@@ -60,11 +78,26 @@ type PersistedServerRequest = {
 
 const PERSISTED_SERVER_REQUEST_UNRESOLVED_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PERSISTED_SERVER_REQUEST_RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000
+const SHARED_SESSION_NOTIFICATION_TRIGGER_METHODS = new Set([
+  'turn/started',
+  'turn/completed',
+  'turn/interrupted',
+])
+const SHARED_SESSION_RPC_TRIGGER_METHODS = new Set([
+  'turn/start',
+  'turn/interrupt',
+  'thread/resume',
+  'thread/start',
+])
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+function readText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function getErrorMessage(payload: unknown, fallback: string): string {
@@ -111,6 +144,94 @@ function parseTimestampMs(value: string | null): number | null {
   if (!value) return null
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? null : timestamp
+}
+
+function readPendingServerRequestThreadId(params: unknown): string {
+  const record = asRecord(params)
+  return readText(record?.threadId)
+}
+
+function readNotificationThreadId(params: unknown): string {
+  const record = asRecord(params)
+  if (!record) return ''
+
+  const directThreadId = readText(record.threadId)
+  if (directThreadId) return directThreadId
+
+  const snakeThreadId = readText(record.thread_id)
+  if (snakeThreadId) return snakeThreadId
+
+  const conversationId = readText(record.conversationId)
+  if (conversationId) return conversationId
+
+  const snakeConversationId = readText(record.conversation_id)
+  if (snakeConversationId) return snakeConversationId
+
+  const thread = asRecord(record.thread)
+  const nestedThreadId = readText(thread?.id)
+  if (nestedThreadId) return nestedThreadId
+
+  const turn = asRecord(record.turn)
+  const turnThreadId = readText(turn?.threadId)
+  if (turnThreadId) return turnThreadId
+
+  return readText(turn?.thread_id)
+}
+
+function readThreadIdFromRpcPayload(method: string, params: unknown, result: unknown): string {
+  if (!SHARED_SESSION_RPC_TRIGGER_METHODS.has(method)) return ''
+
+  const paramRecord = asRecord(params)
+  const directThreadId = readText(paramRecord?.threadId)
+  if (directThreadId) return directThreadId
+
+  if (method !== 'thread/start') return ''
+  const resultRecord = asRecord(result)
+  const thread = asRecord(resultRecord?.thread)
+  return readText(thread?.id)
+}
+
+function readRequestThreadId(request: { threadId?: string; params: unknown }): string {
+  return readText(request.threadId) || readPendingServerRequestThreadId(request.params)
+}
+
+function toProjectorPendingServerRequest(
+  request: PendingServerRequest,
+): {
+  id: number
+  method: string
+  threadId: string
+  turnId: string
+  itemId: string
+  receivedAtIso: string
+  params: unknown
+} {
+  const requestParams = asRecord(request.params)
+  return {
+    id: request.id,
+    method: request.method,
+    threadId: readRequestThreadId(request),
+    turnId: readText(requestParams?.turnId),
+    itemId: readText(requestParams?.itemId),
+    receivedAtIso: request.receivedAtIso,
+    params: request.params,
+  }
+}
+
+function readThreadTitle(thread: Record<string, unknown>): string {
+  const candidates = [
+    thread.name,
+    thread.preview,
+  ]
+
+  for (const candidate of candidates) {
+    const title = readText(candidate)
+    if (title.length > 0) {
+      return title
+    }
+  }
+
+  return 'Untitled thread'
 }
 
 function runGit(args: string[], cwd: string): Promise<string> {
@@ -819,6 +940,7 @@ class AppServerProcess {
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
   private readonly persistedServerRequests = new Map<number, PersistedServerRequest>()
   private readonly threadCwdById = new Map<string, string>()
+  private readonly persistedServerRequestsLedgerPath = getPersistedServerRequestsLedgerPath()
   private persistedServerRequestsLoaded: Promise<void> | null = null
   private persistedServerRequestsFlushChain: Promise<void> = Promise.resolve()
 
@@ -896,6 +1018,9 @@ class AppServerProcess {
     }
 
     if (typeof message.method === 'string' && typeof message.id !== 'number') {
+      if (SHARED_SESSION_NOTIFICATION_TRIGGER_METHODS.has(message.method)) {
+        this.triggerSharedSessionSnapshotSync(readNotificationThreadId(message.params ?? null))
+      }
       this.emitNotification({
         method: message.method,
         params: message.params ?? null,
@@ -940,7 +1065,7 @@ class AppServerProcess {
 
     this.persistedServerRequestsLoaded = (async () => {
       try {
-        const raw = await readFile(getPersistedServerRequestsLedgerPath(), 'utf8')
+        const raw = await readFile(this.persistedServerRequestsLedgerPath, 'utf8')
         const payload = JSON.parse(raw) as { requests?: unknown[] } | null
         const rows = Array.isArray(payload?.requests) ? payload.requests : []
         this.persistedServerRequests.clear()
@@ -1005,7 +1130,7 @@ class AppServerProcess {
       .catch(() => {})
       .then(async () => {
         this.prunePersistedServerRequests()
-        const ledgerPath = getPersistedServerRequestsLedgerPath()
+        const ledgerPath = this.persistedServerRequestsLedgerPath
         await mkdir(dirname(ledgerPath), { recursive: true })
         const payload = {
           version: 1,
@@ -1099,12 +1224,70 @@ class AppServerProcess {
     }
   }
 
+  triggerSharedSessionSnapshotSync(threadId: string): void {
+    const normalizedThreadId = readText(threadId)
+    if (!normalizedThreadId) return
+
+    try {
+      void this.syncSharedSessionSnapshot(normalizedThreadId).catch(() => {})
+    } catch {
+      // Keep shared snapshot refresh failures isolated from the main bridge flow.
+    }
+  }
+
+  async syncSharedSessionSnapshot(threadId: string): Promise<void> {
+    const normalizedThreadId = readText(threadId)
+    if (!normalizedThreadId) return
+
+    try {
+      await this.ensurePersistedServerRequestsLoaded()
+      const payload = asRecord(await this.rpc('thread/read', {
+        threadId: normalizedThreadId,
+        includeTurns: true,
+      })) as ThreadReadResponse | null
+      const thread = asRecord(payload?.thread)
+      if (!thread) return
+
+      const title = readThreadTitle(thread)
+      const cwd = readText(thread.cwd)
+      const messages = normalizeThreadMessagesV2(payload as ThreadReadResponse)
+      const inProgress = normalizeThreadInProgressV2(payload as ThreadReadResponse)
+      const activeTurnId = readText(normalizeActiveTurnIdV2(payload as ThreadReadResponse))
+      const pendingServerRequests = Array.from(this.pendingServerRequests.values())
+        .filter((request) => readRequestThreadId(request) === normalizedThreadId)
+        .map((request) => toProjectorPendingServerRequest(request))
+      const persistedServerRequests = Array.from(this.persistedServerRequests.values()).filter((request) =>
+        readText(request.threadId) === normalizedThreadId,
+      )
+
+      const snapshot = buildSharedSessionSnapshot({
+        sessionId: normalizedThreadId,
+        sourceThreadId: normalizedThreadId,
+        sourceConversationId: null,
+        title,
+        cwd: cwd || null,
+        owner: 'web',
+        ownerInstanceId: null,
+        messages,
+        inProgress,
+        activeTurnId: activeTurnId || null,
+        pendingServerRequests,
+        persistedServerRequests,
+        latestErrorMessage: null,
+        updatedAtIso: new Date().toISOString(),
+      }) as Parameters<typeof writeSharedSessionSnapshot>[0]
+      await writeSharedSessionSnapshot(snapshot)
+    } catch {
+      // Snapshot refresh is best-effort and must never impact the bridge flow.
+    }
+  }
+
   private async toPersistedServerRequest(pendingRequest: PendingServerRequest): Promise<PersistedServerRequest> {
     const requestParams = asRecord(pendingRequest.params)
     return {
       id: pendingRequest.id,
       method: pendingRequest.method,
-      threadId: typeof requestParams?.threadId === 'string' ? requestParams.threadId : '',
+      threadId: pendingRequest.threadId || (typeof requestParams?.threadId === 'string' ? requestParams.threadId : ''),
       turnId: typeof requestParams?.turnId === 'string' ? requestParams.turnId : '',
       itemId: typeof requestParams?.itemId === 'string' ? requestParams.itemId : '',
       cwd: (await this.resolveRequestWorkspace(pendingRequest.params)).cwd,
@@ -1121,6 +1304,7 @@ class AppServerProcess {
   async dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
     await this.ensurePersistedServerRequestsLoaded()
     const dismissedRequestIds: number[] = []
+    const affectedThreadIds = new Set<string>()
     for (const requestId of requestIds) {
       const current = this.persistedServerRequests.get(requestId)
       if (!current) continue
@@ -1132,9 +1316,16 @@ class AppServerProcess {
         dismissedBy: 'user',
       })
       dismissedRequestIds.push(requestId)
+      const threadId = readText(current.threadId)
+      if (threadId) {
+        affectedThreadIds.add(threadId)
+      }
     }
     if (dismissedRequestIds.length > 0) {
       this.queuePersistedServerRequestsFlush()
+      for (const threadId of affectedThreadIds) {
+        this.triggerSharedSessionSnapshotSync(threadId)
+      }
     }
     return dismissedRequestIds
   }
@@ -1145,6 +1336,7 @@ class AppServerProcess {
       throw new Error(`No pending server request found for id ${String(requestId)}`)
     }
     this.pendingServerRequests.delete(requestId)
+    const threadId = readRequestThreadId(pendingRequest)
 
     // Ensure the persisted approval ledger is updated even if the initial upsert
     // has not yet completed. We use the available pendingRequest data to
@@ -1178,13 +1370,9 @@ class AppServerProcess {
       }
 
       this.queuePersistedServerRequestsFlush()
+      this.triggerSharedSessionSnapshotSync(threadId)
     })()
     this.sendServerRequestReply(requestId, reply)
-    const requestParams = asRecord(pendingRequest.params)
-    const threadId =
-      typeof requestParams?.threadId === 'string' && requestParams.threadId.length > 0
-        ? requestParams.threadId
-        : ''
     this.emitNotification({
       method: 'server/request/resolved',
       params: {
@@ -1198,17 +1386,20 @@ class AppServerProcess {
   }
 
   private handleServerRequest(requestId: number, method: string, params: unknown): void {
+    const threadId = readPendingServerRequestThreadId(params)
     const pendingRequest: PendingServerRequest = {
       id: requestId,
       method,
       params,
       receivedAtIso: new Date().toISOString(),
+      threadId,
     }
     this.pendingServerRequests.set(requestId, pendingRequest)
     void (async () => {
       const persisted = await this.toPersistedServerRequest(pendingRequest)
       await this.upsertPersistedServerRequest(persisted)
     })()
+    this.triggerSharedSessionSnapshotSync(threadId)
 
     this.emitNotification({
       method: 'server/request',
@@ -1585,20 +1776,38 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         const payload = await readJsonBody(req)
         const body = asRecord(payload) as RpcProxyRequest | null
 
-        if (!body || typeof body.method !== 'string' || body.method.length === 0) {
-          setJson(res, 400, { error: 'Invalid body: expected { method, params? }' })
-          return
-        }
-
-        const result = await appServer.rpc(body.method, body.params ?? null)
-        setJson(res, 200, { result })
+      if (!body || typeof body.method !== 'string' || body.method.length === 0) {
+        setJson(res, 400, { error: 'Invalid body: expected { method, params? }' })
         return
       }
+
+      const result = await appServer.rpc(body.method, body.params ?? null)
+      appServer.triggerSharedSessionSnapshotSync(readThreadIdFromRpcPayload(body.method, body.params ?? null, result))
+      setJson(res, 200, { result })
+      return
+    }
 
       if (req.method === 'POST' && url.pathname === '/codex-api/server-requests/respond') {
         const payload = await readJsonBody(req)
         await appServer.respondToServerRequest(payload)
         setJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/shared-sessions') {
+        setJson(res, 200, { data: await listSharedSessionSnapshots() })
+        return
+      }
+
+      const sharedSessionPrefix = '/codex-api/shared-sessions/'
+      if (req.method === 'GET' && url.pathname.startsWith(sharedSessionPrefix)) {
+        const sessionId = decodeURIComponent(url.pathname.slice(sharedSessionPrefix.length)).trim()
+        if (!sessionId) {
+          setJson(res, 400, { error: 'Missing path parameter: sessionId' })
+          return
+        }
+
+        setJson(res, 200, { data: await readSharedSessionSnapshot(sessionId) })
         return
       }
 
