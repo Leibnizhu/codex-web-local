@@ -17,27 +17,22 @@
       >
         <div class="message-row">
           <div class="message-stack">
-            <article class="request-card">
-              <p class="request-title">{{ request.method }}</p>
+            <ApprovalRequestCard
+              v-if="request.method === 'item/commandExecution/requestApproval' || request.method === 'item/fileChange/requestApproval'"
+              :model="readApprovalModel(request)"
+              :ui-language="normalizedLanguage"
+              @submit="onSubmitApprovalRequest(request.id, $event)"
+              @skip="onCancelApprovalRequest(request.id)"
+              @open-workspace-diff="onOpenWorkspaceDiff"
+            />
+
+            <article v-else class="request-card">
+              <p class="request-title">{{ readRequestTitle(request) }}</p>
               <p class="request-meta">{{ t('threadConversation.requestMeta', { id: request.id, time: formatIsoTime(request.receivedAtIso) }) }}</p>
 
               <p v-if="readRequestReason(request)" class="request-reason">{{ readRequestReason(request) }}</p>
 
-              <section v-if="request.method === 'item/commandExecution/requestApproval'" class="request-actions">
-                <button type="button" class="request-button request-button-primary" @click="onRespondApproval(request.id, 'accept')">{{ t('threadConversation.accept') }}</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'acceptForSession')">{{ t('threadConversation.acceptForSession') }}</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'decline')">{{ t('threadConversation.decline') }}</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'cancel')">{{ t('threadConversation.cancel') }}</button>
-              </section>
-
-              <section v-else-if="request.method === 'item/fileChange/requestApproval'" class="request-actions">
-                <button type="button" class="request-button request-button-primary" @click="onRespondApproval(request.id, 'accept')">{{ t('threadConversation.accept') }}</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'acceptForSession')">{{ t('threadConversation.acceptForSession') }}</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'decline')">{{ t('threadConversation.decline') }}</button>
-                <button type="button" class="request-button" @click="onRespondApproval(request.id, 'cancel')">{{ t('threadConversation.cancel') }}</button>
-              </section>
-
-              <section v-else-if="request.method === 'item/tool/requestUserInput'" class="request-user-input">
+              <section v-if="request.method === 'item/tool/requestUserInput'" class="request-user-input">
                 <div
                   v-for="question in readToolQuestions(request)"
                   :key="`${request.id}:${question.id}`"
@@ -212,7 +207,7 @@
           </div>
         </div>
       </li>
-      <li v-if="fileChanges && fileChanges.files.length > 0" class="conversation-item conversation-item-request">
+      <li v-if="fileChanges && fileChanges.files.length > 0 && !hasPendingFileChangeApproval" class="conversation-item conversation-item-request">
         <div class="message-row">
           <div class="message-stack">
             <article class="file-change-card">
@@ -266,8 +261,14 @@ import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 import IconTablerCheck from '../icons/IconTablerCheck.vue'
 import IconTablerCopy from '../icons/IconTablerCopy.vue'
 import IconTablerX from '../icons/IconTablerX.vue'
+import ApprovalRequestCard from './ApprovalRequestCard.vue'
 import { formatDisplayPath } from '../../utils/pathUtils'
 import { copyTextToClipboard, readMessageCopyPayload } from '../../utils/messageCopy'
+import {
+  buildApprovalRequestDisplayModel,
+  type ApprovalDecision,
+  type ApprovalRequestDisplayModel,
+} from '../../utils/approvalRequestDisplay'
 import {
   type InlineSegment,
   buildFileReferenceHrefFromValue,
@@ -304,6 +305,9 @@ const copiedMessageKey = ref<string | null>(null)
 const toolQuestionAnswers = ref<Record<string, string>>({})
 const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const BOTTOM_THRESHOLD_PX = 16
+const hasPendingFileChangeApproval = computed(() =>
+  props.pendingRequests.some((request) => request.method === 'item/fileChange/requestApproval'),
+)
 
 let scrollRestoreFrame = 0
 let bottomLockFrame = 0
@@ -346,6 +350,17 @@ function readRequestReason(request: UiServerRequest): string {
   const params = asRecord(request.params)
   const reason = params?.reason
   return typeof reason === 'string' ? reason.trim() : ''
+}
+
+function readRequestTitle(request: UiServerRequest): string {
+  switch (request.method) {
+    case 'item/tool/requestUserInput':
+      return '需要你补充输入'
+    case 'item/tool/call':
+      return '需要确认工具调用结果'
+    default:
+      return '需要处理一条请求'
+  }
 }
 
 function toolQuestionKey(requestId: number, questionId: string): string {
@@ -414,10 +429,24 @@ function onQuestionOtherAnswerInput(requestId: number, questionId: string, event
   }
 }
 
-function onRespondApproval(requestId: number, decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel'): void {
+function readApprovalModel(request: UiServerRequest): ApprovalRequestDisplayModel | null {
+  return buildApprovalRequestDisplayModel(
+    request,
+    props.fileChanges && props.fileChanges.turnId === request.turnId ? props.fileChanges : null,
+  )
+}
+
+function onSubmitApprovalRequest(requestId: number, decision: ApprovalDecision): void {
   emit('respondServerRequest', {
     id: requestId,
     result: { decision },
+  })
+}
+
+function onCancelApprovalRequest(requestId: number): void {
+  emit('respondServerRequest', {
+    id: requestId,
+    result: { decision: 'cancel' },
   })
 }
 
