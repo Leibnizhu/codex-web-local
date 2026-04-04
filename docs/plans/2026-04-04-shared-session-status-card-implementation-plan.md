@@ -161,12 +161,12 @@ Expected: PASS
 ### 实际实现边界
 
 - 状态卡仅消费 `selectedSharedSessionSnapshot`
-- 当前只展示 `state`、`owner`、`latestTurnSummary`、`attention`、`activeTurnId`
+- 当前展示 `state`、最近 3 条共享进展、`attention`、`activeTurnId`
 - 组件保持完全只读，不提供审批、接管或跳转能力
-- 当前仍然只在详情页顶部展示，还没有做镜像线程列表或全局总览
+- 当前作为消息流前置内容随消息一起滚动，不再单独固定在详情页顶部
 
 ### 实际验证结果
 
 - `node --test tests/sharedSessionStatusCard.test.mjs` 通过
-- `node --test tests/sharedSessionUi.test.mjs tests/sharedSessionBridge.test.mjs tests/sharedSessionStatusCard.test.mjs` 通过
+- `node --test tests/sharedSessionProjector.test.mjs tests/sharedSessionBridge.test.mjs tests/sharedSessionStatusCard.test.mjs` 通过
 - `npm run build` 通过

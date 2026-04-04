@@ -96,6 +96,7 @@ import {
   enqueueQueuedMessage,
   type QueuedMessageState,
 } from './desktop-state/queue-utils'
+import { isApprovalRequestMethod } from '../utils/approvalRequestDisplay'
 import {
   listPersistedServerRequestsForWorkspace as listPersistedServerRequestsForWorkspaceFromMap,
   listSelectedServerRequests,
@@ -314,6 +315,17 @@ export function useDesktopState() {
   })
   const globalLiveServerRequests = computed<UiServerRequest[]>(() => {
     return pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+  })
+  const liveApprovalThreadIdSet = computed<Set<string>>(() => {
+    const threadIds = new Set<string>()
+    for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
+      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE) continue
+      if (!Array.isArray(requests) || requests.length === 0) continue
+      if (requests.some((request) => isApprovalRequestMethod(request.method))) {
+        threadIds.add(threadId)
+      }
+    }
+    return threadIds
   })
   const globalPersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
     return persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
@@ -2371,6 +2383,7 @@ export function useDesktopState() {
     selectedThreadPersistedServerRequests,
     selectedWorkspacePersistedServerRequests,
     globalLiveServerRequests,
+    liveApprovalThreadIdSet,
     globalPersistedServerRequests,
     sharedSessionSnapshots,
     sharedSessionSnapshotByThreadId,

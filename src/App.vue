@@ -52,6 +52,7 @@
           :selected-thread-id="selectedThreadId" :is-loading="isLoadingThreads"
           :search-query="sidebarSearchQuery"
           :shared-session-snapshot-by-thread-id="sharedSessionSnapshotByThreadId"
+          :live-approval-thread-id-set="liveApprovalThreadIdSet"
           :ui-language="uiLanguage"
           @select="onSelectThread"
           @archive="onArchiveThread" @start-new-thread="onStartNewThread" @rename-thread="onRenameThread" @rename-project="onRenameProject"
@@ -153,25 +154,29 @@
           <template v-else>
             <div class="content-grid content-grid-thread" :class="{ 'content-grid-thread-has-preview': previewPanel !== null }">
               <div class="content-thread">
-                <div class="content-thread-stack">
-                  <SharedSessionStatusCard
-                    v-if="selectedSharedSessionSnapshot"
-                    :snapshot="selectedSharedSessionSnapshot"
-                    :ui-language="uiLanguage"
-                  />
-                  <ThreadConversation :messages="filteredMessages" :is-loading="isLoadingMessages"
-                    :active-thread-id="composerThreadContextId" :scroll-state="selectedThreadScrollState"
-                    :project-cwd="selectedThread?.cwd ?? ''"
-                    :file-changes="selectedThreadFileChanges"
-                    :ui-language="uiLanguage"
-                    :is-thinking-indicator-visible="isThinkingIndicatorVisible"
-                    :pending-requests="selectedThreadServerRequests"
-                    @update-scroll-state="onUpdateThreadScrollState"
-                    @respond-server-request="onRespondServerRequest"
-                    @open-file-reference="onOpenFileReference"
-                    @open-file-diff="onOpenFileDiff"
-                    @open-workspace-diff="onOpenWorkspaceDiff" />
-                </div>
+                <ThreadConversation :messages="filteredMessages" :is-loading="isLoadingMessages"
+                  :active-thread-id="composerThreadContextId" :scroll-state="selectedThreadScrollState"
+                  :project-cwd="selectedThread?.cwd ?? ''"
+                  :file-changes="selectedThreadFileChanges"
+                  :floating-request-id="selectedPrimaryApprovalRequestId"
+                  :ui-language="uiLanguage"
+                  :is-thinking-indicator-visible="isThinkingIndicatorVisible"
+                  :pending-requests="selectedThreadServerRequests"
+                  @update-scroll-state="onUpdateThreadScrollState"
+                  @respond-server-request="onRespondServerRequest"
+                  @open-file-reference="onOpenFileReference"
+                  @open-file-diff="onOpenFileDiff"
+                  @open-workspace-diff="onOpenWorkspaceDiff">
+                  <template #prepend>
+                    <SharedSessionStatusCard
+                      v-if="selectedSharedSessionSnapshot"
+                      :snapshot="selectedSharedSessionSnapshot"
+                      :live-approval-count="selectedThreadServerRequests.length"
+                      :persisted-approval-count="selectedThreadPersistedServerRequests.length"
+                      :ui-language="uiLanguage"
+                    />
+                  </template>
+                </ThreadConversation>
               </div>
 
               <CodePreviewPanel
@@ -189,6 +194,16 @@
             </div>
 
             <div class="content-composer-row">
+              <div v-if="selectedPrimaryApprovalRequest" class="content-approval-overlay-host">
+                <PendingApprovalOverlay
+                  :request="selectedPrimaryApprovalRequest"
+                  :file-changes="selectedThreadFileChanges"
+                  :ui-language="uiLanguage"
+                  @submit="onRespondServerRequest"
+                  @skip="onRespondServerRequest"
+                  @open-workspace-diff="onOpenWorkspaceDiff"
+                />
+              </div>
               <section v-if="selectedQueuedMessages.length > 0" class="content-queued-messages" aria-live="polite">
                 <p class="content-queued-messages-title">{{ t('app.queuedMessagesTitle', { count: selectedQueuedMessages.length }) }}</p>
                 <ul class="content-queued-messages-list">
@@ -257,6 +272,7 @@ import { useRoute, useRouter } from 'vue-router'
 import DesktopLayout from './components/layout/DesktopLayout.vue'
 import SidebarThreadTree from './components/sidebar/SidebarThreadTree.vue'
 import ContentHeader from './components/content/ContentHeader.vue'
+import PendingApprovalOverlay from './components/content/PendingApprovalOverlay.vue'
 import SharedSessionStatusCard from './components/content/SharedSessionStatusCard.vue'
 import ThreadConversation from './components/content/ThreadConversation.vue'
 import ThreadComposer from './components/content/ThreadComposer.vue'
@@ -271,6 +287,8 @@ import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
 import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges, UiWorkspaceDiffMode } from './types/codex'
 import { fetchFilePreview } from './api/codexGateway'
+import { buildApprovalRequestDisplayModel, isApprovalRequestMethod } from './utils/approvalRequestDisplay'
+import { shouldShowThinkingIndicator } from './utils/thinkingIndicatorState'
 import {
   normalizePathSeparators,
   getBasename,
@@ -288,9 +306,11 @@ const {
   selectedThread,
   selectedThreadScrollState,
   selectedThreadServerRequests,
+  selectedThreadPersistedServerRequests,
   selectedSharedSessionSnapshot,
   selectedWorkspacePersistedServerRequests,
   globalLiveServerRequests,
+  liveApprovalThreadIdSet,
   globalPersistedServerRequests,
   selectedWorkspaceModel,
   selectedWorkspaceDiffTotals,
@@ -439,8 +459,28 @@ const thinkingIndicatorDetail = computed(() => {
   }
   return ''
 })
+const selectedPrimaryApprovalRequest = computed(() => {
+  for (const request of selectedThreadServerRequests.value) {
+    if (!isApprovalRequestMethod(request.method)) continue
+    const fileChanges = selectedThreadFileChanges.value && selectedThreadFileChanges.value.turnId === request.turnId
+      ? selectedThreadFileChanges.value
+      : null
+    if (buildApprovalRequestDisplayModel(request, fileChanges)) {
+      return request
+    }
+  }
+  return null
+})
+const selectedPrimaryApprovalRequestId = computed(() => selectedPrimaryApprovalRequest.value?.id ?? null)
+const hasSelectedThreadPendingServerRequests = computed(() => selectedThreadServerRequests.value.length > 0)
 const isThinkingIndicatorVisible = computed(() =>
-  !isHomeRoute.value && (isSelectedThreadInProgress.value || isSendingMessage.value || liveOverlay.value !== null),
+  shouldShowThinkingIndicator({
+    isHomeRoute: isHomeRoute.value,
+    isSelectedThreadInProgress: isSelectedThreadInProgress.value,
+    isSendingMessage: isSendingMessage.value,
+    hasLiveOverlay: liveOverlay.value !== null,
+    hasPendingServerRequests: hasSelectedThreadPendingServerRequests.value,
+  }),
 )
 const filteredMessages = computed(() =>
   messages.value.filter((message) => {
@@ -1124,16 +1164,12 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
   @apply flex-1 min-h-0;
 }
 
-.content-thread-stack {
-  @apply h-full min-h-0 flex flex-col gap-3;
-}
-
-.content-thread-stack :deep(.conversation-root) {
-  @apply flex-1 min-h-0;
-}
-
 .content-composer-row {
   @apply min-h-0 flex flex-col gap-2;
+}
+
+.content-approval-overlay-host {
+  @apply w-full;
 }
 
 .content-queued-messages {

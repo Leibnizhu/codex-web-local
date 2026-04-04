@@ -170,7 +170,12 @@ export function normalizeServerRequest(params: unknown, globalScope: string): Ui
   }
 
   const requestParamRecord = asRecord(requestParams)
-  const threadId = readString(requestParamRecord?.threadId) || globalScope
+  const threadId =
+    readString(requestParamRecord?.threadId) ||
+    readString(requestParamRecord?.thread_id) ||
+    readString(requestParamRecord?.conversationId) ||
+    readString(requestParamRecord?.conversation_id) ||
+    globalScope
   const turnId = readString(requestParamRecord?.turnId)
   const itemId = readString(requestParamRecord?.itemId)
   const receivedAtIso = readString(row.receivedAtIso) || new Date().toISOString()
