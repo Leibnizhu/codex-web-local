@@ -95,12 +95,14 @@
 
     <footer class="approval-actions">
       <p class="approval-selection-note">{{ selectedOptionLabel }}</p>
-      <button type="button" class="approval-skip-button" @click="$emit('skip')">
-        {{ t('threadConversation.approvalSkip') }}
-      </button>
-      <button type="button" class="approval-submit-button" @click="onSubmit">
-        {{ t('threadConversation.approvalSubmit') }}
-      </button>
+      <div class="approval-actions-buttons">
+        <button type="button" class="approval-skip-button" @click="$emit('skip')">
+          {{ t('threadConversation.approvalSkip') }}
+        </button>
+        <button type="button" class="approval-submit-button" @click="onSubmit">
+          {{ t('threadConversation.approvalSubmit') }}
+        </button>
+      </div>
     </footer>
   </article>
 </template>
@@ -373,6 +375,10 @@ function onSubmit(): void {
   background: color-mix(in srgb, var(--color-bg-elevated) 92%, #fffaf0 8%);
 }
 
+.approval-actions-buttons {
+  @apply flex flex-col gap-2;
+}
+
 .approval-selection-note {
   @apply m-0 text-xs leading-5;
   color: var(--color-text-secondary);
@@ -380,7 +386,7 @@ function onSubmit(): void {
 
 .approval-submit-button,
 .approval-skip-button {
-  @apply rounded-xl px-4 py-2.5 text-sm leading-5 font-medium transition;
+  @apply w-full rounded-xl px-4 py-2.5 text-sm leading-5 font-medium transition;
 }
 
 .approval-submit-button {
@@ -413,11 +419,41 @@ function onSubmit(): void {
   .approval-meta-row {
     @apply grid-cols-1 gap-0.5;
   }
+
+  .approval-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin-top: 0.25rem;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    background: color-mix(in srgb, var(--color-bg-elevated) 88%, #fffaf0 12%);
+    backdrop-filter: blur(18px);
+    box-shadow:
+      0 -10px 24px rgba(15, 23, 42, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  }
+
+  .approval-actions-buttons {
+    @apply grid grid-cols-2 gap-2;
+  }
+
+  .approval-selection-note {
+    @apply text-[11px] leading-4;
+  }
 }
 
 @media (min-width: 640px) {
   .approval-actions {
     @apply flex-row items-center justify-between;
+  }
+
+  .approval-actions-buttons {
+    @apply flex-row items-center gap-2 shrink-0;
+  }
+
+  .approval-submit-button,
+  .approval-skip-button {
+    @apply w-auto;
   }
 }
 

@@ -128,6 +128,18 @@ const UI_TEXT = {
     zh: ({ count }) => `${String(count)} 条授权`,
     en: ({ count }) => `${String(count)} approval(s)`,
   },
+  'app.sharedSessionPersistedApprovalRecords': {
+    zh: ({ count }) => `${String(count)} 条遗留授权记录`,
+    en: ({ count }) => `${String(count)} stale approval record(s)`,
+  },
+  'app.sharedSessionPersistedApprovalRecordsShort': {
+    zh: ({ count }) => `${String(count)} 条遗留记录`,
+    en: ({ count }) => `${String(count)} stale record(s)`,
+  },
+  'app.sharedSessionApprovalNeedsReplay': {
+    zh: ({ count }) => `${String(count)} 条授权记录已失效，请重新触发审批`,
+    en: ({ count }) => `${String(count)} approval record(s) expired; re-trigger approval to continue`,
+  },
   'app.sharedSessionReturnToOwner': {
     zh: '请返回控制端继续处理',
     en: 'Return to the owner client to continue',

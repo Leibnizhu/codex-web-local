@@ -3,26 +3,29 @@
     <p v-if="isLoading" class="conversation-loading">{{ t('threadConversation.loadingMessages') }}</p>
 
     <p
-      v-else-if="messages.length === 0 && pendingRequests.length === 0"
+      v-else-if="messages.length === 0 && visiblePendingRequests.length === 0 && !hasPrependSlot"
       class="conversation-empty"
     >
       {{ t('threadConversation.noMessages') }}
     </p>
 
     <ul v-else ref="conversationListRef" class="conversation-list" @scroll="onConversationScroll">
+      <li v-if="hasPrependSlot" class="conversation-item conversation-item-prepend">
+        <slot name="prepend" />
+      </li>
       <li
-        v-for="request in pendingRequests"
+        v-for="request in visiblePendingRequests"
         :key="`server-request:${request.id}`"
         class="conversation-item conversation-item-request"
       >
         <div class="message-row">
           <div class="message-stack">
             <ApprovalRequestCard
-              v-if="request.method === 'item/commandExecution/requestApproval' || request.method === 'item/fileChange/requestApproval'"
+              v-if="shouldRenderApprovalCard(request)"
               :model="readApprovalModel(request)"
               :ui-language="normalizedLanguage"
-              @submit="onSubmitApprovalRequest(request.id, $event)"
-              @skip="onCancelApprovalRequest(request.id)"
+              @submit="onSubmitApprovalRequest(request, $event)"
+              @skip="onCancelApprovalRequest(request)"
               @open-workspace-diff="onOpenWorkspaceDiff"
             />
 
@@ -255,7 +258,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useSlots, watch } from 'vue'
 import type { ThreadScrollState, UiMessage, UiServerRequest, UiTurnFileChanges } from '../../types/codex'
 import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 import IconTablerCheck from '../icons/IconTablerCheck.vue'
@@ -266,6 +269,7 @@ import { formatDisplayPath } from '../../utils/pathUtils'
 import { copyTextToClipboard, readMessageCopyPayload } from '../../utils/messageCopy'
 import {
   buildApprovalRequestDisplayModel,
+  isApprovalRequestMethod,
   type ApprovalDecision,
   type ApprovalRequestDisplayModel,
 } from '../../utils/approvalRequestDisplay'
@@ -288,6 +292,7 @@ const props = defineProps<{
   fileChanges: UiTurnFileChanges | null
   uiLanguage?: UiLanguage
   isThinkingIndicatorVisible?: boolean
+  floatingRequestId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -298,6 +303,7 @@ const emit = defineEmits<{
   openWorkspaceDiff: []
 }>()
 
+const slots = useSlots()
 const conversationListRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 const modalImageUrl = ref('')
@@ -316,6 +322,10 @@ let shouldForceBottomOnNextRestore = false
 let copiedMessageResetTimer: ReturnType<typeof setTimeout> | null = null
 const trackedPendingImages = new WeakSet<HTMLImageElement>()
 const normalizedLanguage = computed<UiLanguage>(() => props.uiLanguage ?? 'zh')
+const hasPrependSlot = computed(() => Boolean(slots.prepend))
+const visiblePendingRequests = computed(() =>
+  props.pendingRequests.filter((request) => !(isApprovalRequest(request) && request.id === props.floatingRequestId)),
+)
 
 function t(key: UiTextKey, params?: Record<string, number | string>): string {
   return tUi(normalizedLanguage.value, key, params)
@@ -354,6 +364,12 @@ function readRequestReason(request: UiServerRequest): string {
 
 function readRequestTitle(request: UiServerRequest): string {
   switch (request.method) {
+    case 'item/commandExecution/requestApproval':
+    case 'execCommandApproval':
+      return '需要确认命令执行'
+    case 'item/fileChange/requestApproval':
+    case 'applyPatchApproval':
+      return '需要确认文件改动'
     case 'item/tool/requestUserInput':
       return '需要你补充输入'
     case 'item/tool/call':
@@ -361,6 +377,10 @@ function readRequestTitle(request: UiServerRequest): string {
     default:
       return '需要处理一条请求'
   }
+}
+
+function isApprovalRequest(request: UiServerRequest): boolean {
+  return isApprovalRequestMethod(request.method)
 }
 
 function toolQuestionKey(requestId: number, questionId: string): string {
@@ -436,17 +456,22 @@ function readApprovalModel(request: UiServerRequest): ApprovalRequestDisplayMode
   )
 }
 
-function onSubmitApprovalRequest(requestId: number, decision: ApprovalDecision): void {
+function shouldRenderApprovalCard(request: UiServerRequest): boolean {
+  return isApprovalRequest(request) && readApprovalModel(request) !== null
+}
+
+function onSubmitApprovalRequest(request: UiServerRequest, decision: ApprovalDecision): void {
   emit('respondServerRequest', {
-    id: requestId,
+    id: request.id,
     result: { decision },
   })
 }
 
-function onCancelApprovalRequest(requestId: number): void {
+function onCancelApprovalRequest(request: UiServerRequest): void {
+  const model = readApprovalModel(request)
   emit('respondServerRequest', {
-    id: requestId,
-    result: { decision: 'cancel' },
+    id: request.id,
+    result: { decision: model?.cancelDecision ?? 'cancel' },
   })
 }
 
@@ -786,6 +811,10 @@ onBeforeUnmount(() => {
 }
 
 .conversation-item-request {
+  @apply justify-center;
+}
+
+.conversation-item-prepend {
   @apply justify-center;
 }
 

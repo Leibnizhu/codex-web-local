@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { createCodexBridgeMiddleware } from '../src/server/codexAppServerBridge.ts'
-import { readSharedSessionSnapshot, resolveSharedSessionSnapshotPath } from '../src/server/sharedSessionStore.ts'
+import { readSharedSessionSnapshot, resolveSharedSessionSnapshotPath, writeSharedSessionSnapshot } from '../src/server/sharedSessionStore.ts'
 
 function createDeferred() {
   let resolve
@@ -163,6 +163,98 @@ test('syncSharedSessionSnapshot writes a projected snapshot to disk', async () =
   }
 })
 
+test('syncSharedSessionSnapshot preserves an existing terminal owner when refreshing web snapshot content', async () => {
+  const previousCodexHome = process.env.CODEX_HOME
+  const globalScope = globalThis
+  const previousSharedBridge = globalScope.__codexRemoteSharedBridge__
+  const tempCodexHome = await mkdtemp(join(tmpdir(), 'codex-web-local-shared-session-bridge-owner-'))
+  process.env.CODEX_HOME = tempCodexHome
+  delete globalScope.__codexRemoteSharedBridge__
+
+  await writeSharedSessionSnapshot({
+    sessionId: 'thread-bridge-owner',
+    sourceThreadId: 'thread-bridge-owner',
+    sourceConversationId: null,
+    title: '旧快照',
+    cwd: '/repo-owner',
+    owner: 'terminal',
+    ownerInstanceId: 'terminal-instance-9',
+    ownerLeaseExpiresAtIso: '2026-04-04T12:00:00.000Z',
+    state: 'running',
+    activeTurnId: 'turn-owner-old',
+    updatedAtIso: '2026-04-04T09:59:00.000Z',
+    timeline: [],
+    latestTurnSummary: null,
+    attention: {
+      pendingApprovalCount: 0,
+      pendingApprovalKinds: [],
+      latestErrorMessage: null,
+      requiresReturnToOwner: false,
+    },
+    capabilities: {
+      canViewHistory: true,
+      canRequestTakeover: false,
+      canApproveInCurrentClient: false,
+    },
+  })
+
+  const middleware = createCodexBridgeMiddleware()
+  const appServer = globalScope.__codexRemoteSharedBridge__?.appServer
+  assert.ok(appServer, 'expected shared appServer instance')
+
+  appServer.rpc = async (method, params) => {
+    assert.equal(method, 'thread/read')
+    assert.deepEqual(params, {
+      threadId: 'thread-bridge-owner',
+      includeTurns: true,
+    })
+    return {
+      thread: {
+        id: 'thread-bridge-owner',
+        preview: 'Owner preserved thread',
+        cwd: '/repo-owner',
+        turns: [
+          {
+            id: 'turn-owner-1',
+            status: 'completed',
+            items: [
+              {
+                type: 'agentMessage',
+                id: 'msg-owner-1',
+                text: '当前由 app 继续执行',
+              },
+            ],
+          },
+        ],
+      },
+    }
+  }
+  appServer.persistedServerRequestsLoaded = Promise.resolve()
+
+  try {
+    await appServer.syncSharedSessionSnapshot('thread-bridge-owner')
+
+    const snapshot = await readSharedSessionSnapshot('thread-bridge-owner')
+    assert.ok(snapshot, 'expected snapshot to be written')
+    assert.equal(snapshot.owner, 'terminal')
+    assert.equal(snapshot.ownerInstanceId, 'terminal-instance-9')
+    assert.equal(snapshot.ownerLeaseExpiresAtIso, '2026-04-04T12:00:00.000Z')
+    assert.equal(snapshot.title, 'Owner preserved thread')
+  } finally {
+    middleware.dispose()
+    delete globalScope.__codexRemoteSharedBridge__
+    if (previousSharedBridge) {
+      globalScope.__codexRemoteSharedBridge__ = previousSharedBridge
+    }
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME
+    } else {
+      process.env.CODEX_HOME = previousCodexHome
+    }
+    await rm(tempCodexHome, { recursive: true, force: true })
+  }
+})
+
 test('syncSharedSessionSnapshot waits for persisted ledger loading before writing snapshot', async () => {
   const previousCodexHome = process.env.CODEX_HOME
   const globalScope = globalThis
@@ -254,6 +346,50 @@ test('handleServerRequest swallows shared snapshot refresh failures', async () =
       })
     })
     await new Promise((resolve) => setImmediate(resolve))
+  } finally {
+    middleware.dispose()
+    delete globalScope.__codexRemoteSharedBridge__
+    if (previousSharedBridge) {
+      globalScope.__codexRemoteSharedBridge__ = previousSharedBridge
+    }
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME
+    } else {
+      process.env.CODEX_HOME = previousCodexHome
+    }
+    await rm(tempCodexHome, { recursive: true, force: true })
+  }
+})
+
+test('handleServerRequest keeps execCommandApproval requests scoped to conversationId threads', async () => {
+  const previousCodexHome = process.env.CODEX_HOME
+  const globalScope = globalThis
+  const previousSharedBridge = globalScope.__codexRemoteSharedBridge__
+  const tempCodexHome = await mkdtemp(join(tmpdir(), 'codex-web-local-exec-approval-scope-'))
+  process.env.CODEX_HOME = tempCodexHome
+  delete globalScope.__codexRemoteSharedBridge__
+
+  const middleware = createCodexBridgeMiddleware()
+  const appServer = globalScope.__codexRemoteSharedBridge__?.appServer
+  assert.ok(appServer, 'expected shared appServer instance')
+
+  appServer.syncSharedSessionSnapshot = async () => {}
+
+  try {
+    appServer.handleServerRequest(91, 'execCommandApproval', {
+      conversationId: 'thread-exec-approval-1',
+      callId: 'call-1',
+      command: ['docker', 'compose', 'run', '--rm', 'goose-cli', '--version'],
+      cwd: '/workspace/goose',
+      reason: '需要在沙箱外执行',
+      parsedCmd: [],
+    })
+
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const pendingRequest = appServer.listPendingServerRequests().find((request) => request.id === 91)
+    assert.ok(pendingRequest, 'expected pending exec approval request to be recorded')
+    assert.equal(pendingRequest.threadId, 'thread-exec-approval-1')
   } finally {
     middleware.dispose()
     delete globalScope.__codexRemoteSharedBridge__

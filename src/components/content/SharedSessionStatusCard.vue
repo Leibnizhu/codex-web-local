@@ -2,21 +2,35 @@
   <section class="shared-session-status-card" :data-state="snapshot.state">
     <header class="shared-session-status-header">
       <span class="shared-session-status-chip" :data-state="snapshot.state">{{ stateLabel }}</span>
-      <p class="shared-session-status-owner">{{ ownerSentence }}</p>
     </header>
 
     <div class="shared-session-status-body">
-      <p class="shared-session-status-summary">{{ summaryText }}</p>
+      <div v-if="visibleTimelineEntries.length > 0" class="shared-session-status-timeline">
+        <article
+          v-for="entry in visibleTimelineEntries"
+          :key="entry.id"
+          class="shared-session-status-entry"
+          :data-kind="entry.kind"
+        >
+          <div class="shared-session-status-entry-meta">
+            <span class="shared-session-status-entry-kind">{{ describeEntryKind(entry.kind) }}</span>
+            <span v-if="formatEntryTime(entry.createdAtIso)" class="shared-session-status-entry-time">
+              {{ formatEntryTime(entry.createdAtIso) }}
+            </span>
+          </div>
+          <p class="shared-session-status-entry-text">{{ entry.text }}</p>
+        </article>
+      </div>
+      <p v-else class="shared-session-status-summary">{{ summaryText }}</p>
       <p v-if="attentionText" class="shared-session-status-attention">{{ attentionText }}</p>
     </div>
 
     <div class="shared-session-status-meta">
-      <span class="shared-session-status-pill">{{ ownerLabel }}</span>
       <span
-        v-if="snapshot.attention.pendingApprovalCount > 0"
+        v-if="approvalPillText"
         class="shared-session-status-pill"
       >
-        {{ t('app.sharedSessionPendingApprovals', { count: snapshot.attention.pendingApprovalCount }) }}
+        {{ approvalPillText }}
       </span>
       <span v-if="snapshot.activeTurnId" class="shared-session-status-pill">
         {{ t('app.sharedSessionActiveTurn') }} · {{ snapshot.activeTurnId }}
@@ -32,6 +46,8 @@ import { tUi, type UiLanguage, type UiTextKey } from '../../i18n/uiText'
 
 const props = defineProps<{
   snapshot: UiSharedSessionSnapshot
+  liveApprovalCount?: number
+  persistedApprovalCount?: number
   uiLanguage?: UiLanguage
 }>()
 
@@ -41,15 +57,42 @@ function t(key: UiTextKey, params?: Record<string, number | string>): string {
   return tUi(normalizedLanguage.value, key, params)
 }
 
-const ownerLabel = computed(() =>
-  props.snapshot.owner === 'terminal'
-    ? t('app.sharedSessionOwnerTerminal')
-    : t('app.sharedSessionOwnerWeb'),
+const liveApprovalCount = computed(() =>
+  typeof props.liveApprovalCount === 'number'
+    ? props.liveApprovalCount
+    : props.snapshot.attention.pendingApprovalCount,
 )
 
-const ownerSentence = computed(() =>
-  t('app.sharedSessionControlledBy', { owner: ownerLabel.value }),
+const persistedApprovalCount = computed(() => props.persistedApprovalCount ?? 0)
+
+const hasPersistedApprovalRecords = computed(() =>
+  persistedApprovalCount.value > 0 && liveApprovalCount.value === 0,
 )
+
+function buildApprovalAttentionText(): string {
+  if (hasPersistedApprovalRecords.value) {
+    return [
+      t('app.sharedSessionPersistedApprovalRecords', { count: persistedApprovalCount.value }),
+      t('app.sharedSessionApprovalNeedsReplay', { count: persistedApprovalCount.value }),
+    ].join(' · ')
+  }
+  if (liveApprovalCount.value > 0) {
+    return t('app.sharedSessionPendingApprovals', { count: liveApprovalCount.value })
+  }
+  return ''
+}
+
+function buildAttentionText(snapshot: UiSharedSessionSnapshot): string {
+  const parts: string[] = []
+  if (snapshot.attention.latestErrorMessage) {
+    parts.push(tUi(normalizedLanguage.value, 'app.sharedSessionLatestError', { message: snapshot.attention.latestErrorMessage }))
+  }
+  const approvalAttentionText = buildApprovalAttentionText()
+  if (approvalAttentionText) {
+    parts.push(approvalAttentionText)
+  }
+  return parts.join(' · ')
+}
 
 const stateLabel = computed(() => {
   switch (props.snapshot.state) {
@@ -85,19 +128,90 @@ const summaryText = computed(() => {
   return t('app.sharedSessionLatestTurn')
 })
 
-const attentionText = computed(() => {
-  const parts: string[] = []
-  if (props.snapshot.attention.latestErrorMessage) {
-    parts.push(t('app.sharedSessionLatestError', { message: props.snapshot.attention.latestErrorMessage }))
+const attentionText = computed(() => buildAttentionText(props.snapshot))
+
+const approvalPillText = computed(() => {
+  if (hasPersistedApprovalRecords.value) {
+    return t('app.sharedSessionPersistedApprovalRecordsShort', { count: persistedApprovalCount.value })
   }
-  if (props.snapshot.attention.pendingApprovalCount > 0) {
-    parts.push(t('app.sharedSessionPendingApprovals', { count: props.snapshot.attention.pendingApprovalCount }))
+  if (liveApprovalCount.value > 0) {
+    return t('app.sharedSessionPendingApprovalsShort', { count: liveApprovalCount.value })
   }
-  if (props.snapshot.attention.requiresReturnToOwner) {
-    parts.push(t('app.sharedSessionReturnToOwner'))
-  }
-  return parts.join(' · ')
+  return ''
 })
+
+const visibleTimelineEntries = computed(() => {
+  const entries = props.snapshot.timeline.filter((entry) =>
+    entry.kind !== 'user_message' && entry.text.trim().length > 0,
+  )
+  const latestSummary = props.snapshot.latestTurnSummary?.summary?.trim() ?? ''
+  if (latestSummary && !entries.some((entry) => entry.kind === 'turn_summary' && entry.text.trim() === latestSummary)) {
+    const createdAtIso =
+      props.snapshot.latestTurnSummary?.completedAtIso
+      ?? props.snapshot.latestTurnSummary?.startedAtIso
+      ?? props.snapshot.updatedAtIso
+    if (props.snapshot.latestTurnSummary?.status === 'running') {
+      entries.push({
+        id: `latest-turn-${props.snapshot.activeTurnId ?? props.snapshot.updatedAtIso}`,
+        kind: 'assistant_message',
+        text: latestSummary,
+        createdAtIso,
+      })
+    } else {
+      entries.push({
+        id: `latest-turn-${props.snapshot.activeTurnId ?? props.snapshot.updatedAtIso}`,
+        kind: 'turn_summary',
+        text: latestSummary,
+        createdAtIso,
+        turnId: props.snapshot.latestTurnSummary?.turnId ?? props.snapshot.activeTurnId ?? 'unknown-turn',
+        status:
+          props.snapshot.latestTurnSummary?.status === 'completed'
+            ? 'completed'
+            : props.snapshot.latestTurnSummary?.status === 'failed'
+              ? 'failed'
+              : 'interrupted',
+      })
+    }
+  }
+
+  const derivedAttentionText = buildAttentionText(props.snapshot)
+  if (
+    derivedAttentionText
+    && !entries.some((entry) => entry.kind === 'attention' && entry.text.trim() === derivedAttentionText)
+  ) {
+    entries.push({
+      id: `attention-${props.snapshot.updatedAtIso}`,
+      kind: 'attention',
+      text: derivedAttentionText,
+      createdAtIso: props.snapshot.updatedAtIso,
+      attentionKind: props.snapshot.attention.latestErrorMessage ? 'error' : 'approval',
+    })
+  }
+
+  return entries.slice(-3)
+})
+
+function describeEntryKind(kind: UiSharedSessionSnapshot['timeline'][number]['kind']): string {
+  switch (kind) {
+    case 'assistant_message':
+      return 'AI'
+    case 'turn_summary':
+      return '状态'
+    case 'attention':
+      return '提醒'
+    default:
+      return '进展'
+  }
+}
+
+function formatEntryTime(value: string): string {
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.getTime())) return ''
+  return new Intl.DateTimeFormat(normalizedLanguage.value === 'zh' ? 'zh-CN' : 'en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp)
+}
 </script>
 
 <style scoped>
@@ -124,7 +238,7 @@ const attentionText = computed(() => {
 }
 
 .shared-session-status-header {
-  @apply flex items-center justify-between gap-3 flex-wrap;
+  @apply flex items-center gap-3 flex-wrap;
 }
 
 .shared-session-status-chip {
@@ -154,13 +268,37 @@ const attentionText = computed(() => {
   color: var(--color-text-secondary);
 }
 
-.shared-session-status-owner {
-  @apply m-0 text-xs leading-5;
-  color: var(--color-text-secondary);
-}
-
 .shared-session-status-body {
   @apply flex flex-col gap-1.5;
+}
+
+.shared-session-status-timeline {
+  @apply flex flex-col gap-2;
+}
+
+.shared-session-status-entry {
+  @apply rounded-xl px-3 py-2 flex flex-col gap-1;
+  background: color-mix(in srgb, var(--color-bg-surface) 88%, var(--color-bg-muted));
+}
+
+.shared-session-status-entry-meta {
+  @apply flex items-center justify-between gap-2;
+}
+
+.shared-session-status-entry-kind {
+  @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-muted);
+}
+
+.shared-session-status-entry-time {
+  @apply text-[11px] leading-4 shrink-0;
+  color: var(--color-text-muted);
+}
+
+.shared-session-status-entry-text {
+  @apply m-0 text-sm leading-5 whitespace-pre-wrap break-words;
+  color: var(--color-text-primary);
 }
 
 .shared-session-status-summary {

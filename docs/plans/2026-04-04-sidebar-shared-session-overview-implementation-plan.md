@@ -122,10 +122,11 @@ Expected: PASS
 - 当前只在线程树行内展示，不新增独立镜像分区
 - 当前基础摘要为 `owner · state`，当存在待处理授权时追加短摘要 `N 条授权`
 - 当前未加入除待处理授权数量外的其他 attention 细节，也未加入跳转动作
+- 线程行当前已改成主列 + 固定时间列布局，避免标题、副标题与时间互相遮挡
 - 当前没有做镜像线程筛选、聚合总览或侧边栏顶部专题区
 
 ### 实际验证结果
 
 - `node --test tests/sidebarSharedSessionOverview.test.mjs` 通过
-- `node --test tests/sharedSessionStatusCard.test.mjs tests/sharedSessionUi.test.mjs tests/sidebarSharedSessionOverview.test.mjs` 通过
+- `node --test tests/sharedSessionStatusCard.test.mjs tests/sidebarSharedSessionOverview.test.mjs` 通过
 - `npm run build` 通过

@@ -148,7 +148,13 @@ function parseTimestampMs(value: string | null): number | null {
 
 function readPendingServerRequestThreadId(params: unknown): string {
   const record = asRecord(params)
-  return readText(record?.threadId)
+  if (!record) return ''
+  return (
+    readText(record.threadId) ||
+    readText(record.thread_id) ||
+    readText(record.conversationId) ||
+    readText(record.conversation_id)
+  )
 }
 
 function readNotificationThreadId(params: unknown): string {
@@ -1241,6 +1247,7 @@ class AppServerProcess {
 
     try {
       await this.ensurePersistedServerRequestsLoaded()
+      const existingSnapshot = await readSharedSessionSnapshot(normalizedThreadId)
       const payload = asRecord(await this.rpc('thread/read', {
         threadId: normalizedThreadId,
         includeTurns: true,
@@ -1263,11 +1270,12 @@ class AppServerProcess {
       const snapshot = buildSharedSessionSnapshot({
         sessionId: normalizedThreadId,
         sourceThreadId: normalizedThreadId,
-        sourceConversationId: null,
+        sourceConversationId: existingSnapshot?.sourceConversationId ?? null,
         title,
         cwd: cwd || null,
-        owner: 'web',
-        ownerInstanceId: null,
+        owner: existingSnapshot?.owner === 'terminal' ? 'terminal' : 'web',
+        ownerInstanceId: existingSnapshot?.ownerInstanceId ?? null,
+        ownerLeaseExpiresAtIso: existingSnapshot?.ownerLeaseExpiresAtIso ?? null,
         messages,
         inProgress,
         activeTurnId: activeTurnId || null,

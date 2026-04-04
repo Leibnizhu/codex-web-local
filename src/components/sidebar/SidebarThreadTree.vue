@@ -17,20 +17,18 @@
                 </button>
               </span>
             </template>
-            <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
-              <span class="thread-row-text">
-                <span class="thread-row-title">{{ thread.title }}</span>
-                <span
-                  v-if="readSharedSessionThreadSummary(thread.id)"
-                  class="thread-row-shared-summary"
-                  :data-state="readSharedSessionThreadSummaryState(thread.id)"
-                >
-                  {{ readSharedSessionThreadSummary(thread.id) }}
+            <span class="thread-row-main">
+                <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
+                <span class="thread-row-text">
+                  <span class="thread-row-title">{{ thread.title }}</span>
+                  <span v-if="readThreadStatusSubtitle(thread.id)" class="thread-row-subtitle">{{ readThreadStatusSubtitle(thread.id) }}</span>
                 </span>
-              </span>
-            </button>
+              </button>
+            </span>
             <template #right>
-              <span class="thread-row-time">{{ formatRelative(thread.createdAtIso || thread.updatedAtIso) }}</span>
+              <span class="thread-row-time-wrap">
+                <span class="thread-row-time">{{ formatRelative(thread.createdAtIso || thread.updatedAtIso) }}</span>
+              </span>
             </template>
             <template #right-hover>
               <div class="thread-hover-controls">
@@ -209,20 +207,18 @@
                     </button>
                   </span>
                 </template>
-                <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
-                  <span class="thread-row-text">
-                    <span class="thread-row-title">{{ thread.title }}</span>
-                    <span
-                      v-if="readSharedSessionThreadSummary(thread.id)"
-                      class="thread-row-shared-summary"
-                      :data-state="readSharedSessionThreadSummaryState(thread.id)"
-                    >
-                      {{ readSharedSessionThreadSummary(thread.id) }}
+                <span class="thread-row-main">
+                  <button class="thread-main-button" type="button" :title="thread.preview || thread.title" @click="onSelect(thread.id)">
+                    <span class="thread-row-text">
+                      <span class="thread-row-title">{{ thread.title }}</span>
+                      <span v-if="readThreadStatusSubtitle(thread.id)" class="thread-row-subtitle">{{ readThreadStatusSubtitle(thread.id) }}</span>
                     </span>
-                  </span>
-                </button>
+                  </button>
+                </span>
                 <template #right>
-                  <span class="thread-row-time">{{ formatRelative(thread.createdAtIso || thread.updatedAtIso) }}</span>
+                  <span class="thread-row-time-wrap">
+                    <span class="thread-row-time">{{ formatRelative(thread.createdAtIso || thread.updatedAtIso) }}</span>
+                  </span>
                 </template>
                 <template #right-hover>
                   <div class="thread-hover-controls">
@@ -330,6 +326,7 @@ const props = defineProps<{
   isLoading: boolean
   searchQuery: string
   sharedSessionSnapshotByThreadId: Record<string, UiSharedSessionSnapshot>
+  liveApprovalThreadIdSet: Set<string>
   uiLanguage?: UiLanguage
 }>()
 
@@ -1091,53 +1088,9 @@ function getThreadState(thread: UiThread): 'working' | 'unread' | 'idle' {
   return 'idle'
 }
 
-function readSharedSessionOwnerLabel(threadId: string): string {
-  const snapshot = props.sharedSessionSnapshotByThreadId[threadId]
-  if (!snapshot) return ''
-  return snapshot.owner === 'terminal'
-    ? t('app.sharedSessionOwnerTerminal')
-    : t('app.sharedSessionOwnerWeb')
-}
-
-function readSharedSessionStateLabel(threadId: string): string {
-  const snapshot = props.sharedSessionSnapshotByThreadId[threadId]
-  if (!snapshot) return ''
-
-  switch (snapshot.state) {
-    case 'running':
-      return t('app.sharedSessionStatusRunning')
-    case 'needs_attention':
-      return t('app.sharedSessionStatusNeedsAttention')
-    case 'failed':
-      return t('app.sharedSessionStatusFailed')
-    case 'interrupted':
-      return t('app.sharedSessionStatusInterrupted')
-    case 'stale_owner':
-      return t('app.sharedSessionStatusStaleOwner')
-    default:
-      return t('app.sharedSessionStatusIdle')
-  }
-}
-
-function readSharedSessionThreadSummaryState(threadId: string): string {
-  return props.sharedSessionSnapshotByThreadId[threadId]?.state ?? ''
-}
-
-function readSharedSessionPendingApprovalsLabel(threadId: string): string {
-  const pendingApprovalCount = props.sharedSessionSnapshotByThreadId[threadId]?.attention.pendingApprovalCount ?? 0
-  if (pendingApprovalCount <= 0) return ''
-  return t('app.sharedSessionPendingApprovalsShort', { count: pendingApprovalCount })
-}
-
-function readSharedSessionThreadSummary(threadId: string): string {
-  const ownerLabel = readSharedSessionOwnerLabel(threadId)
-  const stateLabel = readSharedSessionStateLabel(threadId)
-  const pendingApprovalsLabel = readSharedSessionPendingApprovalsLabel(threadId)
-  if (!ownerLabel || !stateLabel) return ''
-  if (pendingApprovalsLabel) {
-    return `${ownerLabel} · ${stateLabel} · ${pendingApprovalsLabel}`
-  }
-  return `${ownerLabel} · ${stateLabel}`
+function readThreadStatusSubtitle(threadId: string): string {
+  if (!props.liveApprovalThreadIdSet.has(threadId)) return ''
+  return normalizedLanguage.value === 'zh' ? '待审批' : 'Pending approval'
 }
 
 watch(
@@ -1425,41 +1378,37 @@ onBeforeUnmount(() => {
 }
 
 .thread-main-button {
-  @apply min-w-0 w-full text-left rounded px-0 py-0 flex items-center;
+  @apply min-w-0 flex-1 w-full overflow-hidden text-left rounded px-0 py-0 flex items-center;
+}
+
+.thread-row-main {
+  @apply min-w-0 flex-1 overflow-hidden;
 }
 
 .thread-row-text {
-  @apply min-w-0 flex flex-col items-start justify-center;
+  @apply min-w-0 w-full flex flex-col items-start justify-center;
 }
 
 .thread-row-title {
-  @apply block text-sm leading-5 font-normal truncate whitespace-nowrap;
+  @apply block w-full text-sm leading-5 font-normal truncate whitespace-nowrap;
   color: var(--color-text-primary);
 }
 
-.thread-row-shared-summary {
-  @apply block text-[11px] leading-4 truncate whitespace-nowrap;
+.thread-row-subtitle {
+  @apply block w-full text-[11px] leading-4 truncate whitespace-nowrap;
   color: var(--color-text-muted);
-}
-
-.thread-row-shared-summary[data-state='running'] {
-  color: #166534;
-}
-
-.thread-row-shared-summary[data-state='needs_attention'] {
-  color: #b45309;
-}
-
-.thread-row-shared-summary[data-state='failed'] {
-  color: #b91c1c;
 }
 
 .thread-status-indicator {
   @apply w-2.5 h-2.5 rounded-full;
 }
 
+.thread-row-time-wrap {
+  @apply inline-flex w-14 shrink-0 justify-end;
+}
+
 .thread-row-time {
-  @apply block text-sm font-normal;
+  @apply block max-w-full text-xs font-normal truncate whitespace-nowrap;
   color: var(--color-text-secondary);
 }
 
