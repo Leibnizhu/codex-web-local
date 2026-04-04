@@ -1288,4 +1288,28 @@ async function submitFirstMessageForNewThread(payload: ComposerSubmitPayload): P
   @apply h-5 w-5 mt-0;
 }
 
+@media (max-width: 720px) {
+  .new-thread-empty {
+    @apply px-4;
+  }
+
+  .new-thread-folder-dropdown {
+    @apply max-w-full;
+  }
+
+  .new-thread-folder-dropdown :deep(.composer-dropdown) {
+    @apply max-w-full justify-center;
+  }
+
+  .new-thread-folder-dropdown :deep(.composer-dropdown-menu-wrap) {
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(20rem, calc(100vw - 1.5rem));
+  }
+
+  .new-thread-folder-dropdown :deep(.composer-dropdown-menu) {
+    width: 100%;
+  }
+}
+
 </style>

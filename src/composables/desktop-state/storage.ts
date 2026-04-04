@@ -1,4 +1,4 @@
-import type { ThreadScrollState, UiRateLimitUsage, UiThreadContextUsage } from '../../types/codex'
+import type { ThreadScrollState, UiChangedFile, UiRateLimitUsage, UiThreadContextUsage, UiTurnFileChanges } from '../../types/codex'
 
 const READ_STATE_STORAGE_KEY = 'codex-web-local.thread-read-state.v1'
 const SCROLL_STATE_STORAGE_KEY = 'codex-web-local.thread-scroll-state.v1'
@@ -7,8 +7,16 @@ const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const AUTO_REFRESH_ENABLED_STORAGE_KEY = 'codex-web-local.auto-refresh-enabled.v1'
 const CONTEXT_USAGE_STORAGE_KEY = 'codex-web-local.thread-context-usage.v2'
+const FILE_CHANGES_STORAGE_KEY = 'codex-web-local.thread-file-changes.v1'
 const RATE_LIMIT_USAGE_STORAGE_KEY = 'codex-web-local.rate-limit-usage.v1'
 const WORKSPACE_BASE_BRANCH_STORAGE_KEY = 'codex-web-local.workspace-base-branch.v1'
+const FILE_CHANGES_DEBUG_ENABLED = true
+
+function debugFileChangesStorage(action: string, payload: Record<string, unknown>): void {
+  if (!FILE_CHANGES_DEBUG_ENABLED) return
+  if (typeof window === 'undefined') return
+  console.debug(`[file-changes-storage] ${action}`, payload)
+}
 
 function clamp(value: number, minValue: number, maxValue: number): number {
   return Math.min(Math.max(value, minValue), maxValue)
@@ -92,6 +100,40 @@ function normalizeRateLimitUsage(value: unknown): UiRateLimitUsage | null {
     windows,
     aiCredits,
     planType: typeof row.planType === 'string' ? row.planType : null,
+  }
+}
+
+function normalizeChangedFile(value: unknown): UiChangedFile | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.path !== 'string' || row.path.trim().length === 0) return null
+  if (typeof row.additions !== 'number' || !Number.isFinite(row.additions) || row.additions < 0) return null
+  if (typeof row.deletions !== 'number' || !Number.isFinite(row.deletions) || row.deletions < 0) return null
+  if (typeof row.diff !== 'string') return null
+  return {
+    path: row.path,
+    additions: row.additions,
+    deletions: row.deletions,
+    diff: row.diff,
+  }
+}
+
+function normalizeTurnFileChanges(value: unknown): UiTurnFileChanges | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.turnId !== 'string' || row.turnId.trim().length === 0) return null
+  if (typeof row.totalAdditions !== 'number' || !Number.isFinite(row.totalAdditions) || row.totalAdditions < 0) return null
+  if (typeof row.totalDeletions !== 'number' || !Number.isFinite(row.totalDeletions) || row.totalDeletions < 0) return null
+  if (!Array.isArray(row.files)) return null
+  const files = row.files
+    .map((file) => normalizeChangedFile(file))
+    .filter((file): file is UiChangedFile => file !== null)
+  if (files.length === 0) return null
+  return {
+    turnId: row.turnId,
+    files,
+    totalAdditions: row.totalAdditions,
+    totalDeletions: row.totalDeletions,
   }
 }
 
@@ -244,6 +286,46 @@ export function loadThreadContextUsageMap(): Record<string, UiThreadContextUsage
 export function saveThreadContextUsageMap(state: Record<string, UiThreadContextUsage>): void {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(CONTEXT_USAGE_STORAGE_KEY, JSON.stringify(state))
+}
+
+export function loadLatestFileChangesMap(): Record<string, UiTurnFileChanges> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(FILE_CHANGES_STORAGE_KEY)
+    if (!raw) {
+      debugFileChangesStorage('load:miss', { storageKey: FILE_CHANGES_STORAGE_KEY })
+      return {}
+    }
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      debugFileChangesStorage('load:invalid-shape', { storageKey: FILE_CHANGES_STORAGE_KEY })
+      return {}
+    }
+    const normalizedMap: Record<string, UiTurnFileChanges> = {}
+    for (const [threadId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!threadId) continue
+      const normalized = normalizeTurnFileChanges(value)
+      if (normalized) normalizedMap[threadId] = normalized
+    }
+    debugFileChangesStorage('load:hit', {
+      storageKey: FILE_CHANGES_STORAGE_KEY,
+      threadIds: Object.keys(normalizedMap),
+    })
+    return normalizedMap
+  } catch {
+    debugFileChangesStorage('load:error', { storageKey: FILE_CHANGES_STORAGE_KEY })
+    return {}
+  }
+}
+
+export function saveLatestFileChangesMap(state: Record<string, UiTurnFileChanges>): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(FILE_CHANGES_STORAGE_KEY, JSON.stringify(state))
+  debugFileChangesStorage('save', {
+    storageKey: FILE_CHANGES_STORAGE_KEY,
+    threadIds: Object.keys(state),
+    turnIds: Object.values(state).map((value) => value.turnId),
+  })
 }
 
 export function loadRateLimitUsage(): UiRateLimitUsage | null {

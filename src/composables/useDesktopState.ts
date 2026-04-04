@@ -53,6 +53,7 @@ import type {
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 import {
   loadAutoRefreshEnabled,
+  loadLatestFileChangesMap,
   loadWorkspaceBaseBranchMap,
   loadProjectDisplayNames,
   loadProjectOrder,
@@ -62,6 +63,7 @@ import {
   loadThreadContextUsageMap,
   loadThreadScrollStateMap,
   saveAutoRefreshEnabled,
+  saveLatestFileChangesMap,
   saveWorkspaceBaseBranchMap,
   saveProjectDisplayNames,
   saveProjectOrder,
@@ -163,6 +165,7 @@ const ARCHIVE_RETRY_BASE_DELAY_MS = 1200
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const TOKEN_USAGE_DEBUG_ENABLED = true
+const FILE_CHANGES_DEBUG_ENABLED = true
 const EMPTY_WORKSPACE_DIRTY_SUMMARY = {
   trackedModified: 0,
   staged: 0,
@@ -213,6 +216,12 @@ function debugTokenUsageNotification(notification: RpcNotification): void {
   })
 }
 
+function debugFileChangesState(action: string, payload: Record<string, unknown>): void {
+  if (!FILE_CHANGES_DEBUG_ENABLED) return
+  if (typeof window === 'undefined') return
+  console.debug(`[file-changes-state] ${action}`, payload)
+}
+
 function isNoRolloutError(error: unknown): error is CodexApiError {
   if (!(error instanceof CodexApiError)) return false
   if (error.status !== 502) return false
@@ -252,7 +261,7 @@ export function useDesktopState() {
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
   const persistedServerRequestsByThreadId = ref<Record<string, UiPersistedServerRequest[]>>({})
   const sharedSessionSnapshots = ref<UiSharedSessionSnapshot[]>([])
-  const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>({})
+  const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>(loadLatestFileChangesMap())
   const queuedMessagesByThreadId = ref<Record<string, QueuedMessageState[]>>({})
   const contextUsageByThreadId = ref<Record<string, UiThreadContextUsage>>(loadThreadContextUsageMap())
   const rateLimitUsage = ref<UiRateLimitUsage | null>(loadRateLimitUsage())
@@ -1191,6 +1200,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
     latestFileChangesByThreadId.value = pruneThreadStateMap(latestFileChangesByThreadId.value, activeThreadIds)
+    saveLatestFileChangesMap(latestFileChangesByThreadId.value)
     queuedMessagesByThreadId.value = pruneThreadStateMap(queuedMessagesByThreadId.value, activeThreadIds)
     contextUsageByThreadId.value = pruneThreadStateMap(contextUsageByThreadId.value, activeThreadIds)
     saveThreadContextUsageMap(contextUsageByThreadId.value)
@@ -1532,6 +1542,7 @@ export function useDesktopState() {
       setThreadInProgress(startedTurn.threadId, true)
       if (latestFileChangesByThreadId.value[startedTurn.threadId]) {
         latestFileChangesByThreadId.value = omitKey(latestFileChangesByThreadId.value, startedTurn.threadId)
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
       }
       if (eventUnreadByThreadId.value[startedTurn.threadId]) {
         eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, startedTurn.threadId)
@@ -1546,8 +1557,18 @@ export function useDesktopState() {
           ...latestFileChangesByThreadId.value,
           [turnDiffUpdate.threadId]: normalized,
         }
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
+        debugFileChangesState('turn-diff-update', {
+          threadId: turnDiffUpdate.threadId,
+          turnId: normalized.turnId,
+          fileCount: normalized.files.length,
+        })
       } else if (latestFileChangesByThreadId.value[turnDiffUpdate.threadId]) {
         latestFileChangesByThreadId.value = omitKey(latestFileChangesByThreadId.value, turnDiffUpdate.threadId)
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
+        debugFileChangesState('turn-diff-clear', {
+          threadId: turnDiffUpdate.threadId,
+        })
       }
     }
 
@@ -1782,6 +1803,18 @@ export function useDesktopState() {
           ...latestFileChangesByThreadId.value,
           [threadId]: fileChanges,
         }
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
+        debugFileChangesState('load-messages:file-changes', {
+          threadId,
+          turnId: fileChanges.turnId,
+          fileCount: fileChanges.files.length,
+        })
+      } else {
+        debugFileChangesState('load-messages:no-file-changes', {
+          threadId,
+          cachedTurnId: latestFileChangesByThreadId.value[threadId]?.turnId ?? null,
+          cachedFileCount: latestFileChangesByThreadId.value[threadId]?.files.length ?? 0,
+        })
       }
 
       const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
@@ -1847,6 +1880,12 @@ export function useDesktopState() {
     selectThreadLoadAbortController?.abort()
     selectThreadLoadAbortController = threadId ? new AbortController() : null
     setSelectedThreadId(threadId)
+    debugFileChangesState('select-thread', {
+      threadId,
+      hasPersistedFileChanges: Boolean(latestFileChangesByThreadId.value[threadId]),
+      persistedTurnId: latestFileChangesByThreadId.value[threadId]?.turnId ?? null,
+      persistedFileCount: latestFileChangesByThreadId.value[threadId]?.files.length ?? 0,
+    })
     if (!threadId) return
 
     void refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })

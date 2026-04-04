@@ -1143,7 +1143,7 @@ watch(
 }
 
 .thread-composer-status-chip {
-  @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-600;
+  @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-600 whitespace-nowrap;
 }
 
 .thread-composer-status-chip-action {
@@ -1310,7 +1310,7 @@ watch(
 }
 
 .thread-composer-branch-text {
-  @apply text-[11px];
+  @apply min-w-0 truncate text-[11px];
   color: var(--color-text-secondary);
 }
 
@@ -1496,5 +1496,53 @@ watch(
 
 .thread-composer-stop-icon {
   @apply h-5 w-5;
+}
+
+@media (max-width: 720px) {
+  .thread-composer {
+    @apply px-3;
+  }
+
+  .thread-composer-input {
+    font-size: 16px;
+    line-height: 1.5rem;
+  }
+
+  .thread-composer-controls {
+    @apply gap-2;
+  }
+
+  .thread-composer-control {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .thread-composer-control :deep(.composer-dropdown-trigger) {
+    min-width: 0;
+  }
+
+  .thread-composer-status-group {
+    @apply min-w-0 flex-1 justify-end gap-1;
+  }
+
+  .thread-composer-branch-wrap {
+    min-width: 0;
+    flex: 1 1 auto;
+    max-width: min(11rem, 100%);
+  }
+
+  .thread-composer-branch-chip,
+  .thread-composer-branch-button {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .thread-composer-submit,
+  .thread-composer-stop {
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 2.5rem;
+    flex: 0 0 2.5rem;
+  }
 }
 </style>
