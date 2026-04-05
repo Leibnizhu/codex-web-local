@@ -956,4 +956,65 @@ const renderableFilePreviewLines = computed<RenderableCodeLine[]>(() => {
 .file-change-stats-del {
   @apply text-[11px] text-[#ef4444] font-medium;
 }
+
+@media (max-width: 720px) {
+  .content-code-preview {
+    min-height: min(58dvh, 34rem);
+    max-height: 68dvh;
+    background: var(--color-bg-overlay);
+    border-color: var(--color-border-default);
+    box-shadow: 0 14px 36px color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+  }
+
+  .content-code-preview-header,
+  .workspace-diff-mode-tabs {
+    background: var(--color-bg-surface);
+    border-color: var(--color-border-default);
+  }
+
+  .content-code-preview-body,
+  .workspace-diff-panel,
+  .workspace-status-panel {
+    background: var(--color-bg-elevated);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .workspace-diff-mode-meta,
+  .workspace-diff-item-button,
+  .workspace-diff-empty {
+    background: var(--color-bg-subtle);
+  }
+
+  .workspace-diff-item-body {
+    background: var(--color-bg-surface);
+  }
+
+  .content-code-preview-title,
+  .workspace-diff-item-path,
+  .workspace-status-item-path,
+  .diff-line-text,
+  .code-line-text {
+    color: var(--color-text-primary);
+  }
+
+  .content-code-preview-subtitle,
+  .workspace-diff-mode-description,
+  .workspace-status-branch {
+    color: var(--color-text-secondary);
+  }
+
+  .workspace-diff-mode-refs,
+  .workspace-diff-base-branch-label,
+  .workspace-diff-base-branch-resolution,
+  .workspace-status-blockers-title,
+  .workspace-status-item-xy,
+  .diff-ln-old,
+  .diff-ln-new {
+    color: var(--color-text-muted);
+  }
+
+  .diff-line-ctx {
+    background: color-mix(in srgb, var(--color-bg-surface) 92%, transparent);
+  }
+}
 </style>
