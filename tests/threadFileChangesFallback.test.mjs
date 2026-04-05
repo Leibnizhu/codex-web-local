@@ -45,3 +45,17 @@ test('ignores malformed or incomplete records without throwing', async () => {
     assert.equal(summary?.turnId, 'turn-2')
   })
 })
+
+test('inherits turn id from surrounding task lifecycle records when apply_patch item omits it', async () => {
+  const { readThreadFileChangesFallbackFromSessionJsonl } = await loadFallbackParser()
+  const sessionJsonl = [
+    '{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-real-1"}}',
+    '{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\\n*** Add File: sample.txt\\n+fallback sample\\n*** End Patch"}}',
+  ].join('\n')
+
+  const summary = await readThreadFileChangesFallbackFromSessionJsonl(sessionJsonl)
+
+  assert.ok(summary)
+  assert.equal(summary.turnId, 'turn-real-1')
+  assert.equal(summary.files[0]?.path, 'sample.txt')
+})
