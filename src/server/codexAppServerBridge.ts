@@ -20,6 +20,8 @@ import {
   writeSharedSessionSnapshot,
 // @ts-ignore - tests import this TypeScript module directly via node:test.
 } from './sharedSessionStore.ts'
+// @ts-ignore - tests import this TypeScript module directly via node:test.
+import { readThreadFileChangesFallbackFromSessionPath } from './threadFileChangesFallback.ts'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -946,6 +948,7 @@ class AppServerProcess {
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
   private readonly persistedServerRequests = new Map<number, PersistedServerRequest>()
   private readonly threadCwdById = new Map<string, string>()
+  private readonly threadPathById = new Map<string, string>()
   private readonly persistedServerRequestsLedgerPath = getPersistedServerRequestsLedgerPath()
   private persistedServerRequestsLoaded: Promise<void> | null = null
   private persistedServerRequestsFlushChain: Promise<void> = Promise.resolve()
@@ -1197,6 +1200,39 @@ class AppServerProcess {
       const normalizedCwd = resolve(cwd)
       this.threadCwdById.set(normalizedThreadId, normalizedCwd)
       return normalizedCwd
+    } catch {
+      return null
+    }
+  }
+
+  private async resolveThreadSessionPath(threadId: string): Promise<string | null> {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return null
+
+    const cached = this.threadPathById.get(normalizedThreadId)
+    if (cached) return cached
+
+    try {
+      const payload = asRecord(await this.rpc('thread/read', {
+        threadId: normalizedThreadId,
+        includeTurns: false,
+      }))
+      const thread = asRecord(payload?.thread)
+      const sessionPath = typeof thread?.path === 'string' ? thread.path.trim() : ''
+      if (!sessionPath) return null
+      this.threadPathById.set(normalizedThreadId, sessionPath)
+      return sessionPath
+    } catch {
+      return null
+    }
+  }
+
+  async readThreadFileChangesFallback(threadId: string): Promise<unknown | null> {
+    const sessionPath = await this.resolveThreadSessionPath(threadId)
+    if (!sessionPath) return null
+
+    try {
+      return await readThreadFileChangesFallbackFromSessionPath(sessionPath)
     } catch {
       return null
     }
@@ -1804,6 +1840,17 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
 
       if (req.method === 'GET' && url.pathname === '/codex-api/shared-sessions') {
         setJson(res, 200, { data: await listSharedSessionSnapshots() })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/thread-file-changes/fallback') {
+        const threadId = readText(url.searchParams.get('threadId'))
+        if (!threadId) {
+          setJson(res, 400, { error: 'Missing query parameter: threadId' })
+          return
+        }
+
+        setJson(res, 200, { data: await appServer.readThreadFileChangesFallback(threadId) })
         return
       }
 

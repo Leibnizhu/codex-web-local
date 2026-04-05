@@ -6,6 +6,7 @@ import {
   fetchPendingServerRequests,
   fetchSharedSessionSnapshot as fetchSharedSessionSnapshotRequest,
   fetchSharedSessionSnapshots as fetchSharedSessionSnapshotsRequest,
+  fetchThreadFileChangesFallback as fetchThreadFileChangesFallbackRequest,
   fetchWorkspaceDiffMode as fetchWorkspaceDiffModeRequest,
   rpcCall,
   respondServerRequest,
@@ -283,10 +284,16 @@ function normalizeSharedSessionState(value: unknown): UiSharedSessionState {
 }
 
 function normalizeSharedSessionApprovalKind(value: unknown): UiSharedSessionApprovalKind {
-  const allowed: UiSharedSessionApprovalKind[] = ['command', 'file_change', 'other']
+  const allowed: UiSharedSessionApprovalKind[] = ['command', 'file_change']
   return typeof value === 'string' && allowed.includes(value as UiSharedSessionApprovalKind)
     ? (value as UiSharedSessionApprovalKind)
-    : 'other'
+    : 'file_change'
+}
+
+function readSharedSessionApprovalKind(value: unknown): UiSharedSessionApprovalKind | null {
+  if (typeof value !== 'string') return null
+  const normalized = normalizeSharedSessionApprovalKind(value)
+  return normalized === value ? normalized : null
 }
 
 function normalizeSharedSessionTimelineEntries(value: unknown): UiSharedSessionTimelineEntry[] {
@@ -327,7 +334,7 @@ function normalizeSharedSessionTimelineEntries(value: unknown): UiSharedSessionT
 
       if (kind === 'attention') {
         const attentionKind = row.attentionKind
-        if (attentionKind !== 'approval' && attentionKind !== 'error') return null
+        if (attentionKind !== 'approval' && attentionKind !== 'attention' && attentionKind !== 'error') return null
         return {
           id,
           kind,
@@ -419,8 +426,14 @@ function normalizeSharedSessionSnapshot(value: unknown): UiSharedSessionSnapshot
           ? Math.max(0, Math.trunc(attentionRow.pendingApprovalCount))
           : 0,
       pendingApprovalKinds: Array.isArray(attentionRow.pendingApprovalKinds)
-        ? attentionRow.pendingApprovalKinds.map((value) => normalizeSharedSessionApprovalKind(value))
+        ? attentionRow.pendingApprovalKinds
+          .map((value) => readSharedSessionApprovalKind(value))
+          .filter((value): value is UiSharedSessionApprovalKind => value !== null)
         : [],
+      pendingAttentionCount:
+        typeof attentionRow.pendingAttentionCount === 'number' && Number.isFinite(attentionRow.pendingAttentionCount)
+          ? Math.max(0, Math.trunc(attentionRow.pendingAttentionCount))
+          : 0,
       latestErrorMessage: typeof attentionRow.latestErrorMessage === 'string' && attentionRow.latestErrorMessage.trim().length > 0
         ? attentionRow.latestErrorMessage.trim()
         : null,
@@ -450,6 +463,29 @@ function normalizeChangedFiles(value: unknown): UiWorkspaceDiffSnapshot['files']
       }
     })
     .filter((file): file is UiWorkspaceDiffSnapshot['files'][number] => file !== null)
+}
+
+function normalizeTurnFileChangesFallback(value: unknown): UiTurnFileChanges | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const row = value as Partial<UiTurnFileChanges>
+  const turnId = typeof row.turnId === 'string' ? row.turnId.trim() : ''
+  const files = normalizeChangedFiles(row.files)
+  if (!turnId || files.length === 0) return null
+
+  const totalAdditions = typeof row.totalAdditions === 'number' && Number.isFinite(row.totalAdditions)
+    ? Math.max(0, Math.trunc(row.totalAdditions))
+    : files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = typeof row.totalDeletions === 'number' && Number.isFinite(row.totalDeletions)
+    ? Math.max(0, Math.trunc(row.totalDeletions))
+    : files.reduce((sum, file) => sum + file.deletions, 0)
+
+  return {
+    turnId,
+    files,
+    totalAdditions,
+    totalDeletions,
+  }
 }
 
 function normalizeWorkspaceDiffSnapshot(value: unknown, fallbackCwd: string, fallbackMode: UiWorkspaceDiffMode): UiWorkspaceDiffSnapshot {
@@ -524,6 +560,21 @@ async function getThreadMessagesV2(threadId: string): Promise<UiMessage[]> {
   return normalizeThreadMessagesV2(payload)
 }
 
+async function getThreadFileChangesFallbackV2(
+  threadId: string,
+  options: RpcCallOptions = {},
+): Promise<UiTurnFileChanges | null> {
+  try {
+    const payload = await fetchThreadFileChangesFallbackRequest(threadId, options)
+    return normalizeTurnFileChangesFallback(payload)
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    return null
+  }
+}
+
 async function getThreadConversationDataV2(
   threadId: string,
   options: RpcCallOptions = {},
@@ -532,9 +583,11 @@ async function getThreadConversationDataV2(
     threadId,
     includeTurns: true,
   }, options)
+  const threadReadFileChanges = normalizeLatestTurnFileChangesV2(payload)
+  const fileChanges = threadReadFileChanges ?? await getThreadFileChangesFallbackV2(threadId, options)
   return {
     messages: normalizeThreadMessagesV2(payload),
-    fileChanges: normalizeLatestTurnFileChangesV2(payload),
+    fileChanges,
     inProgress: normalizeThreadInProgressV2(payload),
     activeTurnId: normalizeActiveTurnIdV2(payload),
   }

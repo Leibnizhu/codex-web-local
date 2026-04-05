@@ -7,13 +7,40 @@ const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
 const AUTO_REFRESH_ENABLED_STORAGE_KEY = 'codex-web-local.auto-refresh-enabled.v1'
 const CONTEXT_USAGE_STORAGE_KEY = 'codex-web-local.thread-context-usage.v2'
-const FILE_CHANGES_STORAGE_KEY = 'codex-web-local.thread-file-changes.v1'
+const FILE_CHANGES_STORAGE_KEY = 'codex-web-local.thread-file-changes.v2'
+const FILE_CHANGES_DEBUG_STORAGE_KEY = 'codex-web-local.debug.file-changes.v1'
 const RATE_LIMIT_USAGE_STORAGE_KEY = 'codex-web-local.rate-limit-usage.v1'
 const WORKSPACE_BASE_BRANCH_STORAGE_KEY = 'codex-web-local.workspace-base-branch.v1'
-const FILE_CHANGES_DEBUG_ENABLED = true
+const MAX_STORED_FILE_CHANGE_THREADS = 20
+
+type StoredChangedFileSummary = Omit<UiChangedFile, 'diff'>
+
+type StoredTurnFileChangesSummary = {
+  turnId: string
+  files: StoredChangedFileSummary[]
+  totalAdditions: number
+  totalDeletions: number
+  storedAt: number
+}
+
+function shortenDebugId(value: string): string {
+  const normalized = value.trim()
+  if (normalized.length <= 8) return normalized
+  return normalized.slice(0, 8)
+}
+
+export function isFileChangesDebugEnabled(): boolean {
+  if (import.meta.env.DEV) return true
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(FILE_CHANGES_DEBUG_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 function debugFileChangesStorage(action: string, payload: Record<string, unknown>): void {
-  if (!FILE_CHANGES_DEBUG_ENABLED) return
+  if (!isFileChangesDebugEnabled()) return
   if (typeof window === 'undefined') return
   console.debug(`[file-changes-storage] ${action}`, payload)
 }
@@ -103,38 +130,102 @@ function normalizeRateLimitUsage(value: unknown): UiRateLimitUsage | null {
   }
 }
 
-function normalizeChangedFile(value: unknown): UiChangedFile | null {
+function normalizeStoredChangedFile(value: unknown): StoredChangedFileSummary | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const row = value as Record<string, unknown>
   if (typeof row.path !== 'string' || row.path.trim().length === 0) return null
   if (typeof row.additions !== 'number' || !Number.isFinite(row.additions) || row.additions < 0) return null
   if (typeof row.deletions !== 'number' || !Number.isFinite(row.deletions) || row.deletions < 0) return null
-  if (typeof row.diff !== 'string') return null
   return {
     path: row.path,
     additions: row.additions,
     deletions: row.deletions,
-    diff: row.diff,
   }
 }
 
-function normalizeTurnFileChanges(value: unknown): UiTurnFileChanges | null {
+function normalizeStoredTurnFileChanges(value: unknown): StoredTurnFileChangesSummary | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const row = value as Record<string, unknown>
   if (typeof row.turnId !== 'string' || row.turnId.trim().length === 0) return null
   if (typeof row.totalAdditions !== 'number' || !Number.isFinite(row.totalAdditions) || row.totalAdditions < 0) return null
   if (typeof row.totalDeletions !== 'number' || !Number.isFinite(row.totalDeletions) || row.totalDeletions < 0) return null
+  if (typeof row.storedAt !== 'number' || !Number.isFinite(row.storedAt) || row.storedAt <= 0) return null
   if (!Array.isArray(row.files)) return null
   const files = row.files
-    .map((file) => normalizeChangedFile(file))
-    .filter((file): file is UiChangedFile => file !== null)
+    .map((file) => normalizeStoredChangedFile(file))
+    .filter((file): file is StoredChangedFileSummary => file !== null)
   if (files.length === 0) return null
   return {
     turnId: row.turnId,
     files,
     totalAdditions: row.totalAdditions,
     totalDeletions: row.totalDeletions,
+    storedAt: row.storedAt,
   }
+}
+
+function toUiTurnFileChanges(summary: StoredTurnFileChangesSummary): UiTurnFileChanges {
+  return {
+    turnId: summary.turnId,
+    files: summary.files.map((file) => ({
+      ...file,
+      diff: '',
+    })),
+    totalAdditions: summary.totalAdditions,
+    totalDeletions: summary.totalDeletions,
+  }
+}
+
+function loadStoredLatestFileChangesMap(): Record<string, StoredTurnFileChangesSummary> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(FILE_CHANGES_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const normalizedMap: Record<string, StoredTurnFileChangesSummary> = {}
+    for (const [threadId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!threadId) continue
+      const normalized = normalizeStoredTurnFileChanges(value)
+      if (normalized) normalizedMap[threadId] = normalized
+    }
+    return normalizedMap
+  } catch {
+    return {}
+  }
+}
+
+function buildStoredTurnFileChangesSummary(
+  value: UiTurnFileChanges,
+  storedAt: number,
+): StoredTurnFileChangesSummary {
+  return {
+    turnId: value.turnId,
+    files: value.files.map((file) => ({
+      path: file.path,
+      additions: file.additions,
+      deletions: file.deletions,
+    })),
+    totalAdditions: value.totalAdditions,
+    totalDeletions: value.totalDeletions,
+    storedAt,
+  }
+}
+
+function buildStoredFileChangeSummaryMap(state: Record<string, UiTurnFileChanges>): Record<string, StoredTurnFileChangesSummary> {
+  const previousState = loadStoredLatestFileChangesMap()
+  const now = Date.now()
+  const entries = Object.entries(state)
+    .map(([threadId, value], index) => {
+      const previous = previousState[threadId]
+      const isSameTurn = previous?.turnId === value.turnId
+      const storedAt = isSameTurn ? previous.storedAt : now + index
+      return [threadId, buildStoredTurnFileChangesSummary(value, storedAt)] as const
+    })
+    .sort((first, second) => second[1].storedAt - first[1].storedAt)
+    .slice(0, MAX_STORED_FILE_CHANGE_THREADS)
+
+  return Object.fromEntries(entries)
 }
 
 export function loadReadStateMap(): Record<string, string> {
@@ -290,42 +381,34 @@ export function saveThreadContextUsageMap(state: Record<string, UiThreadContextU
 
 export function loadLatestFileChangesMap(): Record<string, UiTurnFileChanges> {
   if (typeof window === 'undefined') return {}
-  try {
-    const raw = window.localStorage.getItem(FILE_CHANGES_STORAGE_KEY)
-    if (!raw) {
-      debugFileChangesStorage('load:miss', { storageKey: FILE_CHANGES_STORAGE_KEY })
-      return {}
-    }
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      debugFileChangesStorage('load:invalid-shape', { storageKey: FILE_CHANGES_STORAGE_KEY })
-      return {}
-    }
-    const normalizedMap: Record<string, UiTurnFileChanges> = {}
-    for (const [threadId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!threadId) continue
-      const normalized = normalizeTurnFileChanges(value)
-      if (normalized) normalizedMap[threadId] = normalized
-    }
-    debugFileChangesStorage('load:hit', {
-      storageKey: FILE_CHANGES_STORAGE_KEY,
-      threadIds: Object.keys(normalizedMap),
-    })
-    return normalizedMap
-  } catch {
-    debugFileChangesStorage('load:error', { storageKey: FILE_CHANGES_STORAGE_KEY })
+  const storedState = loadStoredLatestFileChangesMap()
+  if (Object.keys(storedState).length === 0) {
+    debugFileChangesStorage('load:miss', { storageKey: FILE_CHANGES_STORAGE_KEY })
     return {}
   }
+  const normalizedMap = Object.fromEntries(
+    Object.entries(storedState).map(([threadId, value]) => [threadId, toUiTurnFileChanges(value)]),
+  ) as Record<string, UiTurnFileChanges>
+  debugFileChangesStorage('load:hit', {
+    storageKey: FILE_CHANGES_STORAGE_KEY,
+    threadIds: Object.keys(normalizedMap).map((value) => shortenDebugId(value)),
+  })
+  return normalizedMap
 }
 
 export function saveLatestFileChangesMap(state: Record<string, UiTurnFileChanges>): void {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(FILE_CHANGES_STORAGE_KEY, JSON.stringify(state))
-  debugFileChangesStorage('save', {
-    storageKey: FILE_CHANGES_STORAGE_KEY,
-    threadIds: Object.keys(state),
-    turnIds: Object.values(state).map((value) => value.turnId),
-  })
+  try {
+    const storedState = buildStoredFileChangeSummaryMap(state)
+    window.localStorage.setItem(FILE_CHANGES_STORAGE_KEY, JSON.stringify(storedState))
+    debugFileChangesStorage('save', {
+      storageKey: FILE_CHANGES_STORAGE_KEY,
+      threadIds: Object.keys(storedState).map((value) => shortenDebugId(value)),
+      turnIds: Object.values(storedState).map((value) => shortenDebugId(value.turnId)),
+    })
+  } catch {
+    debugFileChangesStorage('save:error', { storageKey: FILE_CHANGES_STORAGE_KEY })
+  }
 }
 
 export function loadRateLimitUsage(): UiRateLimitUsage | null {

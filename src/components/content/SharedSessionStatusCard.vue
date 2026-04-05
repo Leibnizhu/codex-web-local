@@ -64,6 +64,7 @@ const liveApprovalCount = computed(() =>
 )
 
 const persistedApprovalCount = computed(() => props.persistedApprovalCount ?? 0)
+const pendingAttentionCount = computed(() => props.snapshot.attention.pendingAttentionCount ?? 0)
 
 const hasPersistedApprovalRecords = computed(() =>
   persistedApprovalCount.value > 0 && liveApprovalCount.value === 0,
@@ -90,6 +91,9 @@ function buildAttentionText(snapshot: UiSharedSessionSnapshot): string {
   const approvalAttentionText = buildApprovalAttentionText()
   if (approvalAttentionText) {
     parts.push(approvalAttentionText)
+  }
+  if (pendingAttentionCount.value > 0) {
+    parts.push(t('app.sharedSessionPendingAttentionRequests', { count: pendingAttentionCount.value }))
   }
   return parts.join(' · ')
 }
@@ -136,6 +140,9 @@ const approvalPillText = computed(() => {
   }
   if (liveApprovalCount.value > 0) {
     return t('app.sharedSessionPendingApprovalsShort', { count: liveApprovalCount.value })
+  }
+  if (pendingAttentionCount.value > 0) {
+    return t('app.sharedSessionPendingAttentionRequestsShort', { count: pendingAttentionCount.value })
   }
   return ''
 })
@@ -184,7 +191,12 @@ const visibleTimelineEntries = computed(() => {
       kind: 'attention',
       text: derivedAttentionText,
       createdAtIso: props.snapshot.updatedAtIso,
-      attentionKind: props.snapshot.attention.latestErrorMessage ? 'error' : 'approval',
+      attentionKind:
+        props.snapshot.attention.latestErrorMessage
+          ? 'error'
+          : liveApprovalCount.value > 0 || hasPersistedApprovalRecords.value
+            ? 'approval'
+            : 'attention',
     })
   }
 

@@ -86,14 +86,48 @@ test('buildSharedSessionSnapshot projects pending approvals into needs_attention
   })
 
   assert.equal(snapshot.state, 'needs_attention')
-  assert.equal(snapshot.attention.pendingApprovalCount, 3)
+  assert.equal(snapshot.attention.pendingApprovalCount, 2)
   assert.deepEqual(snapshot.attention.pendingApprovalKinds, [
     'command',
     'file_change',
-    'other',
   ])
+  assert.equal(snapshot.attention.pendingAttentionCount, 1)
   assert.equal(snapshot.attention.requiresReturnToOwner, true)
   assert.equal(snapshot.latestTurnSummary, null)
+})
+
+test('buildSharedSessionSnapshot keeps non-approval requests in attention without inflating approval counts', () => {
+  const snapshot = buildSharedSessionSnapshot({
+    sessionId: 'session-2b',
+    sourceThreadId: 'thread-2b',
+    sourceConversationId: null,
+    title: 'Workspace request session',
+    cwd: '/workspace',
+    owner: 'terminal',
+    ownerInstanceId: 'terminal-instance-2',
+    messages: [],
+    inProgress: false,
+    activeTurnId: null,
+    pendingServerRequests: [
+      {
+        id: 11,
+        method: 'workspace/approve',
+        threadId: 'thread-2b',
+        turnId: 'turn-2b',
+        itemId: 'item-11',
+        receivedAtIso: '2026-04-04T10:03:00.000Z',
+        params: null,
+      },
+    ],
+    persistedServerRequests: [],
+    latestErrorMessage: null,
+    updatedAtIso: '2026-04-04T10:04:00.000Z',
+  })
+
+  assert.equal(snapshot.state, 'needs_attention')
+  assert.equal(snapshot.attention.pendingApprovalCount, 0)
+  assert.deepEqual(snapshot.attention.pendingApprovalKinds, [])
+  assert.equal(snapshot.attention.pendingAttentionCount, 1)
 })
 
 test('buildSharedSessionSnapshot prefers failed state when latest error exists', () => {
@@ -263,10 +297,10 @@ test('buildSharedSessionSnapshot normalizes pending approval kinds from live and
     updatedAtIso: '2026-04-04T10:11:00.000Z',
   })
 
-  assert.equal(snapshot.attention.pendingApprovalCount, 3)
+  assert.equal(snapshot.attention.pendingApprovalCount, 2)
   assert.deepEqual(snapshot.attention.pendingApprovalKinds, [
     'command',
     'file_change',
-    'other',
   ])
+  assert.equal(snapshot.attention.pendingAttentionCount, 1)
 })

@@ -229,6 +229,7 @@
                   <button
                     type="button"
                     class="file-change-button"
+                    :disabled="!change.diff.trim().length"
                     @click="onOpenFileDiff(change.path, change.diff, change.additions, change.deletions)"
                   >
                     <span class="file-change-path">{{ displayFileChangePath(change.path) }}</span>

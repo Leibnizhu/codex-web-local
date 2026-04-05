@@ -16,6 +16,7 @@ test('shared session UI contract adds front-end snapshot types and gateway reade
   assert.match(typesSource, /export type UiSharedSessionSnapshot = \{/)
   assert.match(typesSource, /export type UiSharedSessionState =/)
   assert.match(typesSource, /pendingApprovalKinds: UiSharedSessionApprovalKind\[]/)
+  assert.match(typesSource, /pendingAttentionCount: number/)
   assert.match(rpcClientSource, /export async function fetchSharedSessionSnapshots\(\): Promise<unknown\[]>/)
   assert.match(rpcClientSource, /export async function fetchSharedSessionSnapshot\(sessionId: string\): Promise<unknown \| null>/)
   assert.match(gatewaySource, /function normalizeSharedSessionSnapshot\(value: unknown\): UiSharedSessionSnapshot \| null/)

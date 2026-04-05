@@ -164,7 +164,7 @@ export type UiSharedSessionState =
   | 'interrupted'
   | 'stale_owner'
 
-export type UiSharedSessionApprovalKind = 'command' | 'file_change' | 'other'
+export type UiSharedSessionApprovalKind = 'command' | 'file_change'
 
 export type UiSharedSessionTimelineEntry =
   | {
@@ -192,7 +192,7 @@ export type UiSharedSessionTimelineEntry =
       kind: 'attention'
       text: string
       createdAtIso: string
-      attentionKind: 'approval' | 'error'
+      attentionKind: 'approval' | 'attention' | 'error'
     }
 
 export type UiSharedSessionSnapshot = {
@@ -218,6 +218,7 @@ export type UiSharedSessionSnapshot = {
   attention: {
     pendingApprovalCount: number
     pendingApprovalKinds: UiSharedSessionApprovalKind[]
+    pendingAttentionCount: number
     latestErrorMessage: string | null
     requiresReturnToOwner: boolean
   }
