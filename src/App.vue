@@ -129,10 +129,10 @@
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
                 :is-turn-in-progress="false"
-                :thread-branch="selectedWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
-                :workspace-model="selectedWorkspaceModel"
-                :workspace-branch-state="selectedWorkspaceBranchState"
-                :persisted-server-requests="selectedWorkspacePersistedServerRequests"
+                :thread-branch="composerWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
+                :workspace-model="composerWorkspaceModel"
+                :workspace-branch-state="null"
+                :persisted-server-requests="composerPersistedServerRequests"
                 :global-live-request-count="globalLiveServerRequests.length"
                 :global-persisted-request-count="globalPersistedServerRequests.length"
                 :context-usage="selectedThreadContextUsage"
@@ -237,10 +237,10 @@
                 :selected-model="selectedModelId"
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
-                :thread-branch="selectedWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
-                :workspace-model="selectedWorkspaceModel"
-                :workspace-branch-state="selectedWorkspaceBranchState"
-                :persisted-server-requests="selectedWorkspacePersistedServerRequests"
+                :thread-branch="composerWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
+                :workspace-model="composerWorkspaceModel"
+                :workspace-branch-state="null"
+                :persisted-server-requests="composerPersistedServerRequests"
                 :global-live-request-count="globalLiveServerRequests.length"
                 :global-persisted-request-count="globalPersistedServerRequests.length"
                 :context-usage="selectedThreadContextUsage"
@@ -308,7 +308,6 @@ const {
   selectedThreadServerRequests,
   selectedThreadPersistedServerRequests,
   selectedSharedSessionSnapshot,
-  selectedWorkspacePersistedServerRequests,
   globalLiveServerRequests,
   liveApprovalThreadIdSet,
   globalPersistedServerRequests,
@@ -316,7 +315,6 @@ const {
   selectedWorkspaceDiffTotals,
   selectedThreadFileChanges,
   selectedQueuedMessages,
-  selectedWorkspaceBranchState,
   selectedThreadContextUsage,
   selectedThreadRateLimitUsage,
   isCompactingSelectedThreadContext,
@@ -344,7 +342,8 @@ const {
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
   compactSelectedThreadContext,
-  refreshSelectedWorkspaceBranchState,
+  getWorkspaceModelForCwd,
+  refreshWorkspaceBranchStateForCwd,
   refreshSelectedWorkspaceDiffTotals,
   fetchWorkspaceDiffSnapshotForMode,
   openPreferredWorkspaceDiffSnapshot,
@@ -352,6 +351,8 @@ const {
   setWorkspaceBaseBranch,
   switchSelectedWorkspaceBranch,
   createAndSwitchSelectedWorkspaceBranch,
+  switchWorkspaceBranchForCwd,
+  createAndSwitchWorkspaceBranchForCwd,
   setSelectedModelId,
   setSelectedReasoningEffort,
   setSelectedChatMode,
@@ -411,6 +412,9 @@ const currentProjectName = computed(() => {
 
   return projectGroups.value[0]?.projectName?.trim() ?? ''
 })
+const activeComposerCwd = computed(() => (isHomeRoute.value ? newThreadCwd.value : selectedThread.value?.cwd ?? '').trim())
+const composerWorkspaceModel = computed(() => getWorkspaceModelForCwd(activeComposerCwd.value))
+const composerPersistedServerRequests = computed(() => composerWorkspaceModel.value?.approvals.persisted ?? [])
 const contentTitle = computed(() => {
   if (isHomeRoute.value) return t('app.newThread')
   return selectedThread.value?.title ?? t('app.chooseThread')
@@ -688,18 +692,28 @@ function onCompactContext(): void {
 }
 
 function onRefreshWorkspaceBranches(): void {
-  void refreshSelectedWorkspaceBranchState({ includeBranches: true, silent: false })
+  const cwd = activeComposerCwd.value
+  if (!cwd) return
+  void refreshWorkspaceBranchStateForCwd(cwd, { includeBranches: true, silent: false })
 }
 
 async function onSwitchWorkspaceBranch(branch: string): Promise<void> {
-  const didSwitch = await switchSelectedWorkspaceBranch(branch)
+  const cwd = activeComposerCwd.value
+  if (!cwd) return
+  const didSwitch = isHomeRoute.value
+    ? await switchWorkspaceBranchForCwd(cwd, branch)
+    : await switchSelectedWorkspaceBranch(branch)
   if (!didSwitch) return
   previewPanel.value = null
   await refreshSelectedWorkspaceDiffTotals()
 }
 
 async function onCreateWorkspaceBranch(branch: string): Promise<void> {
-  const didCreate = await createAndSwitchSelectedWorkspaceBranch(branch)
+  const cwd = activeComposerCwd.value
+  if (!cwd) return
+  const didCreate = isHomeRoute.value
+    ? await createAndSwitchWorkspaceBranchForCwd(cwd, branch)
+    : await createAndSwitchSelectedWorkspaceBranch(branch)
   if (!didCreate) return
   previewPanel.value = null
   await refreshSelectedWorkspaceDiffTotals()
@@ -1015,6 +1029,17 @@ watch(
     if (!hasSelected) {
       newThreadCwd.value = options[0].value
     }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [isHomeRoute.value, newThreadCwd.value] as const,
+  ([homeRoute, cwd]) => {
+    if (!homeRoute) return
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return
+    void refreshWorkspaceBranchStateForCwd(normalizedCwd, { includeBranches: false, silent: true })
   },
   { immediate: true },
 )

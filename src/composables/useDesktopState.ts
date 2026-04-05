@@ -379,23 +379,34 @@ export function useDesktopState() {
     if (!threadId) return []
     return queuedMessagesByThreadId.value[threadId] ?? []
   })
-  const selectedWorkspaceModel = computed<WorkspaceModel | null>(() => {
-    const cwd = selectedThread.value?.cwd?.trim() ?? ''
-    if (!cwd) return null
-    const current = workspaceByCwd.value[cwd]
+  function getWorkspaceModelForCwd(cwd: string): WorkspaceModel | null {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return null
+    const current = workspaceByCwd.value[normalizedCwd]
     if (current) return current
+    const loadingModel = createWorkspaceModel(normalizedCwd)
     return {
-      ...createWorkspaceModel(cwd),
+      ...loadingModel,
       branch: {
-        ...createWorkspaceModel(cwd).branch,
+        ...loadingModel.branch,
         isLoading: true,
       },
     }
-  })
-  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
-    const workspace = selectedWorkspaceModel.value
+  }
+
+  function getWorkspaceBranchStateForCwd(cwd: string): UiWorkspaceBranchState | null {
+    const workspace = getWorkspaceModelForCwd(cwd)
     if (!workspace) return null
     return workspaceBranchStateFromModel(workspace)
+  }
+
+  const selectedWorkspaceModel = computed<WorkspaceModel | null>(() => {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    return getWorkspaceModelForCwd(cwd)
+  })
+  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    return getWorkspaceBranchStateForCwd(cwd)
   })
   const selectedWorkspaceDiffTotals = computed(() => ({
     additions: selectedWorkspaceModel.value?.diff.totalAdditions ?? 0,
@@ -851,6 +862,13 @@ export function useDesktopState() {
     return refreshWorkspaceBranchState(cwd, options)
   }
 
+  async function refreshWorkspaceBranchStateForCwd(
+    cwd: string,
+    options: { includeBranches?: boolean; silent?: boolean } = {},
+  ): Promise<UiWorkspaceBranchState | null> {
+    return refreshWorkspaceBranchState(cwd, options)
+  }
+
   async function refreshWorkspaceDiffTotals(cwd: string): Promise<{ additions: number; deletions: number }> {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return { ...EMPTY_WORKSPACE_DIFF_TOTALS }
@@ -1023,43 +1041,53 @@ export function useDesktopState() {
     return unstagedSnapshot
   }
 
-  async function runSelectedWorkspaceBranchAction(
+  async function runWorkspaceBranchActionForCwd(
+    cwd: string,
     action: (cwd: string) => Promise<void>,
     fallbackMessage: string,
   ): Promise<boolean> {
-    const cwd = selectedThread.value?.cwd?.trim() ?? ''
-    if (!cwd) return false
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return false
 
-    const currentState = await refreshSelectedWorkspaceBranchState({ includeBranches: true, silent: true })
+    const currentState = await refreshWorkspaceBranchState(normalizedCwd, { includeBranches: true, silent: true })
     if (!currentState) return false
     if (currentState.blockedReasons.length > 0) {
       error.value = fallbackMessage
       return false
     }
 
-    upsertWorkspaceBranchState(cwd, (current) => ({
+    upsertWorkspaceBranchState(normalizedCwd, (current) => ({
       ...current,
       isSwitching: true,
     }))
 
     try {
-      await action(cwd)
+      await action(normalizedCwd)
       await loadThreads()
       if (selectedThreadId.value) {
         await loadMessages(selectedThreadId.value, { silent: true })
       }
-      await refreshWorkspaceBranchState(cwd, { includeBranches: true, silent: true })
+      await refreshWorkspaceBranchState(normalizedCwd, { includeBranches: true, silent: true })
       return true
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : fallbackMessage
       return false
     } finally {
-      upsertWorkspaceBranchState(cwd, (current) => ({
+      upsertWorkspaceBranchState(normalizedCwd, (current) => ({
         ...current,
         isSwitching: false,
-        blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, current),
+        blockedReasons: computeWorkspaceBranchBlockedReasons(normalizedCwd, current),
       }))
     }
+  }
+
+  async function runSelectedWorkspaceBranchAction(
+    action: (cwd: string) => Promise<void>,
+    fallbackMessage: string,
+  ): Promise<boolean> {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return false
+    return runWorkspaceBranchActionForCwd(cwd, action, fallbackMessage)
   }
 
   async function switchSelectedWorkspaceBranch(targetBranch: string): Promise<boolean> {
@@ -1076,6 +1104,26 @@ export function useDesktopState() {
     if (!normalizedBranch) return false
     return runSelectedWorkspaceBranchAction(
       (cwd) => createAndSwitchWorkspaceBranch(cwd, normalizedBranch),
+      '当前工作区暂时不能创建分支',
+    )
+  }
+
+  async function switchWorkspaceBranchForCwd(cwd: string, targetBranch: string): Promise<boolean> {
+    const normalizedBranch = targetBranch.trim()
+    if (!normalizedBranch) return false
+    return runWorkspaceBranchActionForCwd(
+      cwd,
+      (targetCwd) => switchWorkspaceBranch(targetCwd, normalizedBranch),
+      '当前工作区暂时不能切换分支',
+    )
+  }
+
+  async function createAndSwitchWorkspaceBranchForCwd(cwd: string, targetBranch: string): Promise<boolean> {
+    const normalizedBranch = targetBranch.trim()
+    if (!normalizedBranch) return false
+    return runWorkspaceBranchActionForCwd(
+      cwd,
+      (targetCwd) => createAndSwitchWorkspaceBranch(targetCwd, normalizedBranch),
       '当前工作区暂时不能创建分支',
     )
   }
@@ -2458,7 +2506,10 @@ export function useDesktopState() {
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
     compactSelectedThreadContext,
+    getWorkspaceModelForCwd,
+    getWorkspaceBranchStateForCwd,
     refreshSelectedWorkspaceBranchState,
+    refreshWorkspaceBranchStateForCwd,
     refreshSelectedWorkspaceDiffTotals,
     fetchWorkspaceDiffSnapshotForMode,
     openPreferredWorkspaceDiffSnapshot,
@@ -2466,6 +2517,8 @@ export function useDesktopState() {
     setWorkspaceBaseBranch,
     switchSelectedWorkspaceBranch,
     createAndSwitchSelectedWorkspaceBranch,
+    switchWorkspaceBranchForCwd,
+    createAndSwitchWorkspaceBranchForCwd,
     setSelectedModelId,
     setSelectedReasoningEffort,
     setSelectedChatMode,
