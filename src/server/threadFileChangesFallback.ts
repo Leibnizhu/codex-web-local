@@ -21,6 +21,17 @@ function toTurnId(record: Record<string, unknown>, candidate: Record<string, unk
   )
 }
 
+function readRecordTurnId(record: Record<string, unknown>): string {
+  return (
+    readText(record.turnId) ||
+    readText(record.turn_id) ||
+    readText(asRecord(record.payload)?.turnId) ||
+    readText(asRecord(record.payload)?.turn_id) ||
+    readText(asRecord(record.item)?.turnId) ||
+    readText(asRecord(record.item)?.turn_id)
+  )
+}
+
 function readToolCall(record: Record<string, unknown>): { turnId: string; name: string; input: string } | null {
   const nestedCandidates = [
     asRecord(record.item),
@@ -161,6 +172,7 @@ export async function readThreadFileChangesFallbackFromSessionJsonl(
 ): Promise<UiTurnFileChanges | null> {
   const lines = sessionJsonl.split('\n')
   let latestSummary: UiTurnFileChanges | null = null
+  let lastSeenTurnId = ''
 
   for (const line of lines) {
     const raw = line.trim()
@@ -174,6 +186,11 @@ export async function readThreadFileChangesFallbackFromSessionJsonl(
     }
     if (!record) continue
 
+    const recordTurnId = readRecordTurnId(record)
+    if (recordTurnId) {
+      lastSeenTurnId = recordTurnId
+    }
+
     const toolCall = readToolCall(record)
     if (!toolCall || toolCall.name !== 'apply_patch') continue
 
@@ -181,7 +198,7 @@ export async function readThreadFileChangesFallbackFromSessionJsonl(
     if (files.length === 0) continue
 
     latestSummary = {
-      turnId: toolCall.turnId,
+      turnId: toolCall.turnId || lastSeenTurnId,
       files,
       totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
       totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0),
