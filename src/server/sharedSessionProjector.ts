@@ -30,7 +30,7 @@ type SharedTimelineEntry =
       kind: 'attention'
       text: string
       createdAtIso: string
-      attentionKind: 'approval' | 'error'
+      attentionKind: 'approval' | 'attention' | 'error'
     }
 
 type SharedSessionSnapshot = {
@@ -55,7 +55,8 @@ type SharedSessionSnapshot = {
   } | null
   attention: {
     pendingApprovalCount: number
-    pendingApprovalKinds: Array<'command' | 'file_change' | 'other'>
+    pendingApprovalKinds: Array<'command' | 'file_change'>
+    pendingAttentionCount: number
     latestErrorMessage: string | null
     requiresReturnToOwner: boolean
   }
@@ -161,10 +162,14 @@ function buildTimelineEntries(
     .filter((entry): entry is SharedTimelineEntry => entry !== null)
 }
 
-function normalizeApprovalKind(method: string): 'command' | 'file_change' | 'other' {
+function normalizeApprovalKind(method: string): 'command' | 'file_change' | null {
   if (method === 'item/commandExecution/requestApproval') return 'command'
   if (method === 'item/fileChange/requestApproval') return 'file_change'
-  return 'other'
+  return null
+}
+
+function isApprovalMethod(method: string): boolean {
+  return normalizeApprovalKind(method) !== null
 }
 
 function isActivePersistedRequest(request: SharedSessionProjectorPersistedRequest): boolean {
@@ -174,14 +179,15 @@ function isActivePersistedRequest(request: SharedSessionProjectorPersistedReques
 function readPendingApprovalKinds(
   pendingServerRequests: SharedSessionProjectorRequest[],
   persistedServerRequests: SharedSessionProjectorPersistedRequest[],
-): Array<'command' | 'file_change' | 'other'> {
-  const kinds: Array<'command' | 'file_change' | 'other'> = []
-  const seen = new Set<'command' | 'file_change' | 'other'>()
+): Array<'command' | 'file_change'> {
+  const kinds: Array<'command' | 'file_change'> = []
+  const seen = new Set<'command' | 'file_change'>()
 
   for (const request of pendingServerRequests) {
     const method = readText(request.method)
     if (!method) continue
     const kind = normalizeApprovalKind(method)
+    if (!kind) continue
     if (seen.has(kind)) continue
     seen.add(kind)
     kinds.push(kind)
@@ -189,6 +195,7 @@ function readPendingApprovalKinds(
 
   for (const request of persistedServerRequests.filter(isActivePersistedRequest)) {
     const kind = normalizeApprovalKind(request.method)
+    if (!kind) continue
     if (seen.has(kind)) continue
     seen.add(kind)
     kinds.push(kind)
@@ -203,18 +210,32 @@ function countActiveApprovals(
 ): number {
   const activePersistedRequests = persistedServerRequests.filter(isActivePersistedRequest)
 
-  return pendingServerRequests.filter((request) => readText(request.method).length > 0).length
-    + activePersistedRequests.length
+  return pendingServerRequests.filter((request) => isApprovalMethod(readText(request.method))).length
+    + activePersistedRequests.filter((request) => isApprovalMethod(request.method)).length
+}
+
+function countActiveAttentionRequests(
+  pendingServerRequests: SharedSessionProjectorRequest[],
+  persistedServerRequests: SharedSessionProjectorPersistedRequest[],
+): number {
+  const activePersistedRequests = persistedServerRequests.filter(isActivePersistedRequest)
+
+  return pendingServerRequests.filter((request) => {
+    const method = readText(request.method)
+    return method.length > 0 && !isApprovalMethod(method)
+  }).length
+    + activePersistedRequests.filter((request) => !isApprovalMethod(request.method)).length
 }
 
 function buildState(
   inProgress: boolean,
   pendingApprovalCount: number,
+  pendingAttentionCount: number,
   latestErrorMessage: string | null,
   ownerLeaseExpiresAtIso: string | null,
 ): SharedSessionState {
   if (latestErrorMessage) return 'failed'
-  if (pendingApprovalCount > 0) return 'needs_attention'
+  if (pendingApprovalCount > 0 || pendingAttentionCount > 0) return 'needs_attention'
   if (inProgress) return 'running'
   if (isOwnerLeaseExpired(ownerLeaseExpiresAtIso)) return 'stale_owner'
   return 'idle'
@@ -229,7 +250,7 @@ function buildLatestTurnSummary(
 
   const summaryTextByState: Record<Exclude<SharedSessionState, 'idle'>, string> = {
     running: '当前 turn 正在运行',
-    needs_attention: '当前 turn 需要你的确认',
+    needs_attention: '当前 turn 需要处理',
     failed: '当前 turn 执行失败',
     interrupted: '当前 turn 已中断',
     stale_owner: '当前 turn 需要重新接管',
@@ -270,9 +291,11 @@ export function buildSharedSessionSnapshot(input: SharedSessionProjectorInput): 
   const pendingServerRequests = Array.isArray(input.pendingServerRequests) ? input.pendingServerRequests : []
   const persistedServerRequests = Array.isArray(input.persistedServerRequests) ? input.persistedServerRequests : []
   const pendingApprovalCount = countActiveApprovals(pendingServerRequests, persistedServerRequests)
+  const pendingAttentionCount = countActiveAttentionRequests(pendingServerRequests, persistedServerRequests)
   const state = buildState(
     Boolean(input.inProgress),
     pendingApprovalCount,
+    pendingAttentionCount,
     latestErrorMessage,
     readText(input.ownerLeaseExpiresAtIso) || null,
   )
@@ -300,6 +323,7 @@ export function buildSharedSessionSnapshot(input: SharedSessionProjectorInput): 
     attention: {
       pendingApprovalCount,
       pendingApprovalKinds: readPendingApprovalKinds(pendingServerRequests, persistedServerRequests),
+      pendingAttentionCount,
       latestErrorMessage,
       requiresReturnToOwner: state !== 'idle' && state !== 'running',
     },

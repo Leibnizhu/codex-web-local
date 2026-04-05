@@ -128,6 +128,14 @@ const UI_TEXT = {
     zh: ({ count }) => `${String(count)} 条授权`,
     en: ({ count }) => `${String(count)} approval(s)`,
   },
+  'app.sharedSessionPendingAttentionRequests': {
+    zh: ({ count }) => `${String(count)} 条待处理请求`,
+    en: ({ count }) => `${String(count)} request(s) need attention`,
+  },
+  'app.sharedSessionPendingAttentionRequestsShort': {
+    zh: ({ count }) => `${String(count)} 条待处理`,
+    en: ({ count }) => `${String(count)} pending item(s)`,
+  },
   'app.sharedSessionPersistedApprovalRecords': {
     zh: ({ count }) => `${String(count)} 条遗留授权记录`,
     en: ({ count }) => `${String(count)} stale approval record(s)`,

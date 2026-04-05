@@ -321,6 +321,59 @@ export async function fetchSharedSessionSnapshot(sessionId: string): Promise<unk
   return record?.data ?? null
 }
 
+export async function fetchThreadFileChangesFallback(
+  threadId: string,
+  options: RpcCallOptions = {},
+): Promise<unknown | null> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) {
+    return null
+  }
+
+  const query = new URLSearchParams({
+    threadId: normalizedThreadId,
+  })
+
+  let response: Response
+  try {
+    response = await fetch(`/codex-api/thread-file-changes/fallback?${query.toString()}`, {
+      signal: options.signal,
+    })
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    throw new CodexApiError(
+      error instanceof Error ? error.message : `Thread file changes fallback ${normalizedThreadId} failed before request was sent`,
+      {
+        code: 'network_error',
+        method: 'thread-file-changes/fallback',
+      },
+    )
+  }
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Thread file changes fallback ${normalizedThreadId} failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'thread-file-changes/fallback',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  return record?.data ?? null
+}
+
 export async function fetchWorkspaceDiffMode(
   cwd: string,
   mode: string,

@@ -28,7 +28,7 @@ export type SharedTimelineEntry =
       kind: 'attention'
       text: string
       createdAtIso: string
-      attentionKind: 'approval' | 'error'
+      attentionKind: 'approval' | 'attention' | 'error'
     }
 
 export type SharedSessionSnapshot = {
@@ -59,7 +59,8 @@ export type SharedSessionSnapshot = {
 
   attention: {
     pendingApprovalCount: number
-    pendingApprovalKinds: Array<'command' | 'file_change' | 'other'>
+    pendingApprovalKinds: Array<'command' | 'file_change'>
+    pendingAttentionCount: number
     latestErrorMessage: string | null
     requiresReturnToOwner: boolean
   }

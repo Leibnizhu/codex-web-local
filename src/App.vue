@@ -171,8 +171,8 @@
                     <SharedSessionStatusCard
                       v-if="selectedSharedSessionSnapshot"
                       :snapshot="selectedSharedSessionSnapshot"
-                      :live-approval-count="selectedThreadServerRequests.length"
-                      :persisted-approval-count="selectedThreadPersistedServerRequests.length"
+                      :live-approval-count="selectedLiveApprovalCount"
+                      :persisted-approval-count="selectedPersistedApprovalCount"
                       :ui-language="uiLanguage"
                     />
                   </template>
@@ -472,6 +472,12 @@ const selectedPrimaryApprovalRequest = computed(() => {
   return null
 })
 const selectedPrimaryApprovalRequestId = computed(() => selectedPrimaryApprovalRequest.value?.id ?? null)
+const selectedLiveApprovalCount = computed(() =>
+  selectedThreadServerRequests.value.filter((request) => isApprovalRequestMethod(request.method)).length,
+)
+const selectedPersistedApprovalCount = computed(() =>
+  selectedThreadPersistedServerRequests.value.filter((request) => isApprovalRequestMethod(request.method)).length,
+)
 const hasSelectedThreadPendingServerRequests = computed(() => selectedThreadServerRequests.value.length > 0)
 const isThinkingIndicatorVisible = computed(() =>
   shouldShowThinkingIndicator({
@@ -739,7 +745,7 @@ function findTurnFileChangeByPath(pathValue: string): UiTurnFileChanges['files']
 
 async function onOpenFileReference(payload: { path: string; line: number | null }): Promise<void> {
   const matchedDiff = findTurnFileChangeByPath(payload.path)
-  if (matchedDiff) {
+  if (matchedDiff?.diff.trim()) {
     onOpenFileDiff({
       path: matchedDiff.path,
       diff: matchedDiff.diff,

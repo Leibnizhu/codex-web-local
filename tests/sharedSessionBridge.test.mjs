@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -148,6 +148,7 @@ test('syncSharedSessionSnapshot writes a projected snapshot to disk', async () =
       'command',
       'file_change',
     ])
+    assert.equal(snapshot.attention.pendingAttentionCount, 0)
   } finally {
     middleware.dispose()
     delete globalScope.__codexRemoteSharedBridge__
@@ -188,6 +189,7 @@ test('syncSharedSessionSnapshot preserves an existing terminal owner when refres
     attention: {
       pendingApprovalCount: 0,
       pendingApprovalKinds: [],
+      pendingAttentionCount: 0,
       latestErrorMessage: null,
       requiresReturnToOwner: false,
     },
@@ -307,6 +309,7 @@ test('syncSharedSessionSnapshot waits for persisted ledger loading before writin
     assert.ok(snapshot, 'expected snapshot to be written after ledger load')
     assert.equal(snapshot?.attention.pendingApprovalCount, 1)
     assert.deepEqual(snapshot?.attention.pendingApprovalKinds, ['command'])
+    assert.equal(snapshot?.attention.pendingAttentionCount, 0)
   } finally {
     middleware.dispose()
     delete globalScope.__codexRemoteSharedBridge__
@@ -649,6 +652,78 @@ test('bridge shared session endpoints return snapshot data', async () => {
     assert.equal(singleResponse.nextCalled, false)
     const singleBody = JSON.parse(singleResponse.res.body)
     assert.equal(singleBody.data?.sessionId, 'thread-bridge-3')
+  } finally {
+    middleware.dispose()
+    delete globalScope.__codexRemoteSharedBridge__
+    if (previousSharedBridge) {
+      globalScope.__codexRemoteSharedBridge__ = previousSharedBridge
+    }
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME
+    } else {
+      process.env.CODEX_HOME = previousCodexHome
+    }
+    await rm(tempCodexHome, { recursive: true, force: true })
+  }
+})
+
+test('bridge file-change fallback endpoint returns summary parsed from session jsonl', async () => {
+  const previousCodexHome = process.env.CODEX_HOME
+  const globalScope = globalThis
+  const previousSharedBridge = globalScope.__codexRemoteSharedBridge__
+  const tempCodexHome = await mkdtemp(join(tmpdir(), 'codex-web-local-thread-file-fallback-'))
+  process.env.CODEX_HOME = tempCodexHome
+  delete globalScope.__codexRemoteSharedBridge__
+
+  const sessionPath = join(tempCodexHome, 'thread-file-changes-fallback.jsonl')
+  const fixture = await readFile(
+    new URL('./fixtures/thread-file-changes-fallback/session-apply-patch.jsonl', import.meta.url),
+    'utf8',
+  )
+  await writeFile(sessionPath, fixture, 'utf8')
+
+  const middleware = createCodexBridgeMiddleware()
+  const appServer = globalScope.__codexRemoteSharedBridge__?.appServer
+  assert.ok(appServer, 'expected shared appServer instance')
+
+  appServer.rpc = async (method, params) => {
+    assert.equal(method, 'thread/read')
+    assert.deepEqual(params, {
+      threadId: 'thread-fallback-1',
+      includeTurns: false,
+    })
+    return {
+      thread: {
+        id: 'thread-fallback-1',
+        cwd: '/repo-bridge',
+        path: sessionPath,
+        turns: [],
+      },
+    }
+  }
+
+  async function callMiddleware(method, url) {
+    const req = {
+      method,
+      url,
+    }
+    const res = createResponseCapture()
+    let nextCalled = false
+    await middleware(req, res, () => {
+      nextCalled = true
+    })
+    return { res, nextCalled }
+  }
+
+  try {
+    const response = await callMiddleware('GET', '/codex-api/thread-file-changes/fallback?threadId=thread-fallback-1')
+    assert.equal(response.nextCalled, false)
+    assert.equal(response.res.statusCode, 200)
+
+    const body = JSON.parse(response.res.body)
+    assert.ok(body.data)
+    assert.equal(body.data.turnId, 'turn-2')
+    assert.equal(body.data.files[0]?.path, 'docs/plans/obsolete.md')
   } finally {
     middleware.dispose()
     delete globalScope.__codexRemoteSharedBridge__

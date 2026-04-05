@@ -53,6 +53,7 @@ import type {
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 import {
   loadAutoRefreshEnabled,
+  isFileChangesDebugEnabled,
   loadLatestFileChangesMap,
   loadWorkspaceBaseBranchMap,
   loadProjectDisplayNames,
@@ -165,7 +166,6 @@ const ARCHIVE_RETRY_BASE_DELAY_MS = 1200
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const TOKEN_USAGE_DEBUG_ENABLED = true
-const FILE_CHANGES_DEBUG_ENABLED = true
 const EMPTY_WORKSPACE_DIRTY_SUMMARY = {
   trackedModified: 0,
   staged: 0,
@@ -217,7 +217,7 @@ function debugTokenUsageNotification(notification: RpcNotification): void {
 }
 
 function debugFileChangesState(action: string, payload: Record<string, unknown>): void {
-  if (!FILE_CHANGES_DEBUG_ENABLED) return
+  if (!isFileChangesDebugEnabled()) return
   if (typeof window === 'undefined') return
   console.debug(`[file-changes-state] ${action}`, payload)
 }

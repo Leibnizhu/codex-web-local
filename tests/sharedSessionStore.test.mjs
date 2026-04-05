@@ -92,6 +92,7 @@ test('writeSharedSessionSnapshot persists and readSharedSessionSnapshot returns 
     attention: {
       pendingApprovalCount: 1,
       pendingApprovalKinds: ['command'],
+      pendingAttentionCount: 0,
       latestErrorMessage: null,
       requiresReturnToOwner: true,
     },
@@ -139,6 +140,7 @@ test('writeSharedSessionSnapshot leaves only the final snapshot file on disk', a
     attention: {
       pendingApprovalCount: 0,
       pendingApprovalKinds: [],
+      pendingAttentionCount: 0,
       latestErrorMessage: null,
       requiresReturnToOwner: false,
     },
@@ -187,6 +189,7 @@ test('listSharedSessionSnapshots returns snapshots in session id order', async (
     attention: {
       pendingApprovalCount: 0,
       pendingApprovalKinds: [],
+      pendingAttentionCount: 0,
       latestErrorMessage: null,
       requiresReturnToOwner: false,
     },
@@ -263,6 +266,7 @@ test('listSharedSessionSnapshots skips corrupt snapshot JSON files', async () =>
     attention: {
       pendingApprovalCount: 0,
       pendingApprovalKinds: [],
+      pendingAttentionCount: 0,
       latestErrorMessage: null,
       requiresReturnToOwner: false,
     },
