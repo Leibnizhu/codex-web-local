@@ -152,11 +152,31 @@
               <IconTablerChevronDown class="thread-composer-branch-chevron" />
             </button>
 
+            <button
+              v-if="isBranchMenuOpen"
+              class="thread-composer-branch-sheet-backdrop"
+              type="button"
+              aria-label="关闭分支面板"
+              tabindex="-1"
+              @click="closeBranchMenu"
+            />
+
             <div
               v-if="isBranchMenuOpen"
-              class="thread-composer-branch-menu"
+              class="thread-composer-branch-menu thread-composer-branch-sheet"
             >
-              <p class="thread-composer-branch-menu-title">{{ tUi(normalizedLanguage, 'composer.branchMenuTitle') }}</p>
+              <div class="thread-composer-branch-menu-header">
+                <div class="thread-composer-branch-sheet-handle" aria-hidden="true" />
+                <p class="thread-composer-branch-menu-title">{{ tUi(normalizedLanguage, 'composer.branchMenuTitle') }}</p>
+                <button
+                  type="button"
+                  class="thread-composer-branch-sheet-close"
+                  aria-label="关闭分支面板"
+                  @click="closeBranchMenu"
+                >
+                  <IconTablerX class="thread-composer-branch-sheet-close-icon" />
+                </button>
+              </div>
               <p v-if="branchBlockedSummary" class="thread-composer-branch-menu-hint">
                 {{ branchBlockedSummary }}
               </p>
@@ -392,6 +412,7 @@ import IconTablerBulb from '../icons/IconTablerBulb.vue'
 import IconModeToggleMenu from '../icons/IconModeToggleMenu.vue'
 import IconTablerPaperclip from '../icons/IconTablerPaperclip.vue'
 import IconTablerTerminal2 from '../icons/IconTablerTerminal2.vue'
+import IconTablerX from '../icons/IconTablerX.vue'
 import { getModelReasoningSupport } from '../../api/codexGateway'
 import ComposerDropdown from './ComposerDropdown.vue'
 
@@ -1174,8 +1195,28 @@ watch(
   @apply absolute bottom-[calc(100%+8px)] right-0 z-30 w-64 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg;
 }
 
+.thread-composer-branch-sheet-backdrop {
+  @apply hidden;
+}
+
+.thread-composer-branch-menu-header {
+  @apply flex items-center gap-2;
+}
+
+.thread-composer-branch-sheet-handle {
+  @apply hidden;
+}
+
 .thread-composer-branch-menu-title {
-  @apply m-0 text-[11px] font-semibold text-zinc-800;
+  @apply m-0 min-w-0 flex-1 text-[11px] font-semibold text-zinc-800;
+}
+
+.thread-composer-branch-sheet-close {
+  @apply hidden;
+}
+
+.thread-composer-branch-sheet-close-icon {
+  @apply h-3.5 w-3.5;
 }
 
 .thread-composer-branch-menu-hint {
@@ -1523,18 +1564,125 @@ watch(
 
   .thread-composer-status-group {
     @apply min-w-0 flex-1 justify-end gap-1;
+    width: auto;
   }
 
   .thread-composer-branch-wrap {
     min-width: 0;
-    flex: 1 1 auto;
-    max-width: min(11rem, 100%);
+    flex: 0 0 auto;
+    max-width: none;
   }
 
   .thread-composer-branch-chip,
   .thread-composer-branch-button {
-    min-width: 0;
-    max-width: 100%;
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 2.5rem;
+    max-width: 2.5rem;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .thread-composer-branch-text,
+  .thread-composer-branch-chevron {
+    display: none;
+  }
+
+  .thread-composer-quota-wrap,
+  .thread-composer-context-wrap {
+    flex: 0 0 auto;
+  }
+
+  .thread-composer-branch-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    display: block;
+    background: color-mix(in srgb, var(--color-bg-overlay) 54%, transparent);
+    backdrop-filter: blur(6px);
+  }
+
+  .thread-composer-branch-menu.thread-composer-branch-sheet {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+    width: auto;
+    max-width: 32.5rem;
+    max-height: min(70vh, 32rem);
+    margin: 0 auto;
+    padding: 0.75rem;
+    border-radius: 1.25rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    box-shadow: 0 24px 80px color-mix(in srgb, black 20%, transparent);
+  }
+
+  .thread-composer-branch-menu-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    margin: -0.75rem -0.75rem 0;
+    padding: 0.5rem 0.75rem 0.25rem;
+    background: color-mix(in srgb, var(--color-bg-surface) 96%, transparent);
+  }
+
+  .thread-composer-branch-sheet-handle {
+    display: block;
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: 2.25rem;
+    height: 0.25rem;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: var(--color-border-default);
+  }
+
+  .thread-composer-branch-menu-title {
+    @apply text-sm;
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .thread-composer-branch-sheet-close {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-500 transition hover:bg-zinc-100;
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .thread-composer-branch-menu-hint,
+  .thread-composer-branch-menu-session-hint,
+  .thread-composer-branch-menu-empty,
+  .thread-composer-branch-dirty-preview-title,
+  .thread-composer-branch-dirty-preview-item,
+  .thread-composer-branch-dirty-preview-more,
+  .thread-composer-branch-persisted-method,
+  .thread-composer-branch-persisted-meta {
+    @apply text-[11px];
+  }
+
+  .thread-composer-branch-list {
+    max-height: min(32vh, 14rem);
+  }
+
+  .thread-composer-branch-persisted-list {
+    max-height: 7.5rem;
+    overflow-y: auto;
+  }
+
+  .thread-composer-branch-create {
+    @apply sticky bottom-0 mt-3 flex-col items-stretch gap-2 rounded-xl border border-zinc-200 bg-white/95 p-2;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    backdrop-filter: blur(10px);
+  }
+
+  .thread-composer-branch-create-button {
+    @apply w-full justify-center;
   }
 
   .thread-composer-submit,
