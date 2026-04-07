@@ -1,7 +1,13 @@
 import {
+  dismissPersistedServerRequests as dismissPersistedServerRequestsRequest,
+  fetchPersistedServerRequests,
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
   fetchPendingServerRequests,
+  fetchSharedSessionSnapshot as fetchSharedSessionSnapshotRequest,
+  fetchSharedSessionSnapshots as fetchSharedSessionSnapshotsRequest,
+  fetchThreadFileChangesFallback as fetchThreadFileChangesFallbackRequest,
+  fetchWorkspaceDiffMode as fetchWorkspaceDiffModeRequest,
   rpcCall,
   respondServerRequest,
   subscribeRpcNotifications,
@@ -17,7 +23,7 @@ import type {
   ThreadListResponse,
   ThreadReadResponse,
 } from './appServerDtos'
-import { normalizeCodexApiError } from './codexErrors'
+import { CodexApiError, extractErrorMessage, normalizeCodexApiError } from './codexErrors'
 import {
   normalizeActiveTurnIdV2,
   normalizeLatestTurnFileChangesV2,
@@ -25,7 +31,26 @@ import {
   normalizeThreadInProgressV2,
   normalizeThreadMessagesV2,
 } from './normalizers/v2'
-import type { ChatMode, UiMessage, UiProjectGroup, UiTurnFileChanges, UserInput } from '../types/codex'
+import type {
+  ChatMode,
+  UiMessage,
+  UiPersistedServerRequest,
+  UiProjectGroup,
+  UiSharedSessionApprovalKind,
+  UiSharedSessionOwner,
+  UiSharedSessionSnapshot,
+  UiSharedSessionState,
+  UiSharedSessionTimelineEntry,
+  UiWorkspaceDirtyEntry,
+  UiWorkspaceDirtyKind,
+  UiWorkspaceDirtySummary,
+  UiTurnFileChanges,
+  UiWorkspaceBranchList,
+  UiWorkspaceDiffMode,
+  UiWorkspaceDiffSnapshot,
+  UiWorkspaceGitStatus,
+  UserInput,
+} from '../types/codex'
 
 type CurrentModelConfig = {
   model: string
@@ -72,6 +97,21 @@ type RpcCallOptions = {
   signal?: AbortSignal
 }
 
+type FetchJsonOptions = {
+  method?: 'GET' | 'POST'
+  body?: unknown
+  signal?: AbortSignal
+}
+
+const EMPTY_WORKSPACE_DIRTY_SUMMARY: UiWorkspaceDirtySummary = {
+  trackedModified: 0,
+  staged: 0,
+  untracked: 0,
+  conflicted: 0,
+  renamed: 0,
+  deleted: 0,
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
@@ -87,11 +127,389 @@ async function callRpc<T>(method: string, params?: unknown, options: RpcCallOpti
   }
 }
 
+async function fetchJson<T>(path: string, fallback: string, method: string, options: FetchJsonOptions = {}): Promise<T> {
+  const requestMethod = options.method ?? 'GET'
+
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: requestMethod,
+      headers: requestMethod === 'POST'
+        ? { 'Content-Type': 'application/json' }
+        : undefined,
+      body: requestMethod === 'POST' ? JSON.stringify(options.body ?? null) : undefined,
+      signal: options.signal,
+    })
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    throw normalizeCodexApiError(error, fallback, method)
+  }
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(extractErrorMessage(payload, fallback), {
+      code: 'http_error',
+      method,
+      status: response.status,
+    })
+  }
+
+  return payload as T
+}
+
 function normalizeReasoningEffort(value: unknown): ReasoningEffort | '' {
   const allowed: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
   return typeof value === 'string' && allowed.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : ''
+}
+
+function normalizeWorkspaceDirtyKind(value: unknown): UiWorkspaceDirtyKind {
+  const allowed: UiWorkspaceDirtyKind[] = [
+    'modified',
+    'added',
+    'deleted',
+    'renamed',
+    'untracked',
+    'conflicted',
+    'unknown',
+  ]
+  return typeof value === 'string' && allowed.includes(value as UiWorkspaceDirtyKind)
+    ? (value as UiWorkspaceDirtyKind)
+    : 'unknown'
+}
+
+function normalizeWorkspaceDirtySummary(value: unknown): UiWorkspaceDirtySummary {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...EMPTY_WORKSPACE_DIRTY_SUMMARY }
+  }
+  const row = value as Partial<UiWorkspaceDirtySummary>
+  return {
+    trackedModified: typeof row.trackedModified === 'number' && Number.isFinite(row.trackedModified)
+      ? Math.max(0, Math.trunc(row.trackedModified))
+      : 0,
+    staged: typeof row.staged === 'number' && Number.isFinite(row.staged)
+      ? Math.max(0, Math.trunc(row.staged))
+      : 0,
+    untracked: typeof row.untracked === 'number' && Number.isFinite(row.untracked)
+      ? Math.max(0, Math.trunc(row.untracked))
+      : 0,
+    conflicted: typeof row.conflicted === 'number' && Number.isFinite(row.conflicted)
+      ? Math.max(0, Math.trunc(row.conflicted))
+      : 0,
+    renamed: typeof row.renamed === 'number' && Number.isFinite(row.renamed)
+      ? Math.max(0, Math.trunc(row.renamed))
+      : 0,
+    deleted: typeof row.deleted === 'number' && Number.isFinite(row.deleted)
+      ? Math.max(0, Math.trunc(row.deleted))
+      : 0,
+  }
+}
+
+function normalizeWorkspaceDirtyEntries(value: unknown): UiWorkspaceDirtyEntry[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Partial<UiWorkspaceDirtyEntry>
+      const path = typeof row.path === 'string' ? row.path.trim() : ''
+      if (!path) return null
+      return {
+        path,
+        x: typeof row.x === 'string' ? row.x.trim().slice(0, 1) : '',
+        y: typeof row.y === 'string' ? row.y.trim().slice(0, 1) : '',
+        kind: normalizeWorkspaceDirtyKind(row.kind),
+        staged: row.staged === true,
+        unstaged: row.unstaged === true,
+      } satisfies UiWorkspaceDirtyEntry
+    })
+    .filter((entry): entry is UiWorkspaceDirtyEntry => entry !== null)
+}
+
+function normalizePersistedServerRequest(value: unknown): UiPersistedServerRequest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Partial<UiPersistedServerRequest>
+  const id = typeof row.id === 'number' && Number.isInteger(row.id) ? row.id : null
+  const method = typeof row.method === 'string' ? row.method.trim() : ''
+  const receivedAtIso = typeof row.receivedAtIso === 'string' ? row.receivedAtIso : ''
+  if (id === null || !method || !receivedAtIso) return null
+  return {
+    id,
+    method,
+    threadId: typeof row.threadId === 'string' ? row.threadId.trim() : '',
+    turnId: typeof row.turnId === 'string' ? row.turnId.trim() : '',
+    itemId: typeof row.itemId === 'string' ? row.itemId.trim() : '',
+    cwd: typeof row.cwd === 'string' ? row.cwd.trim() : '',
+    receivedAtIso,
+    resolvedAtIso: typeof row.resolvedAtIso === 'string' && row.resolvedAtIso.trim().length > 0 ? row.resolvedAtIso : null,
+    resolutionKind: typeof row.resolutionKind === 'string' && row.resolutionKind.trim().length > 0 ? row.resolutionKind : null,
+    dismissedAtIso: typeof row.dismissedAtIso === 'string' && row.dismissedAtIso.trim().length > 0 ? row.dismissedAtIso : null,
+    dismissedReason: typeof row.dismissedReason === 'string' && row.dismissedReason.trim().length > 0 ? row.dismissedReason : null,
+    dismissedBy: row.dismissedBy === 'user' ? 'user' : null,
+    params: row.params ?? null,
+  }
+}
+
+function normalizeWorkspaceDiffMode(value: unknown): UiWorkspaceDiffMode {
+  const allowed: UiWorkspaceDiffMode[] = ['unstaged', 'staged', 'branch', 'lastCommit', 'gitStatus']
+  return typeof value === 'string' && allowed.includes(value as UiWorkspaceDiffMode)
+    ? (value as UiWorkspaceDiffMode)
+    : 'unstaged'
+}
+
+function normalizeSharedSessionOwner(value: unknown): UiSharedSessionOwner {
+  return value === 'terminal' ? 'terminal' : 'web'
+}
+
+function normalizeSharedSessionState(value: unknown): UiSharedSessionState {
+  const allowed: UiSharedSessionState[] = [
+    'idle',
+    'running',
+    'needs_attention',
+    'failed',
+    'interrupted',
+    'stale_owner',
+  ]
+  return typeof value === 'string' && allowed.includes(value as UiSharedSessionState)
+    ? (value as UiSharedSessionState)
+    : 'idle'
+}
+
+function normalizeSharedSessionApprovalKind(value: unknown): UiSharedSessionApprovalKind {
+  const allowed: UiSharedSessionApprovalKind[] = ['command', 'file_change']
+  return typeof value === 'string' && allowed.includes(value as UiSharedSessionApprovalKind)
+    ? (value as UiSharedSessionApprovalKind)
+    : 'file_change'
+}
+
+function readSharedSessionApprovalKind(value: unknown): UiSharedSessionApprovalKind | null {
+  if (typeof value !== 'string') return null
+  const normalized = normalizeSharedSessionApprovalKind(value)
+  return normalized === value ? normalized : null
+}
+
+function normalizeSharedSessionTimelineEntries(value: unknown): UiSharedSessionTimelineEntry[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry): UiSharedSessionTimelineEntry | null => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const row = entry as Record<string, unknown>
+      const id = typeof row.id === 'string' ? row.id.trim() : ''
+      const text = typeof row.text === 'string' ? row.text.trim() : ''
+      const createdAtIso = typeof row.createdAtIso === 'string' ? row.createdAtIso.trim() : ''
+      const kind = typeof row.kind === 'string' ? row.kind.trim() : ''
+      if (!id || !text || !createdAtIso) return null
+
+      if (kind === 'user_message' || kind === 'assistant_message') {
+        return {
+          id,
+          kind,
+          text,
+          createdAtIso,
+        }
+      }
+
+      if (kind === 'turn_summary') {
+        const turnId = typeof row.turnId === 'string' ? row.turnId.trim() : ''
+        const status = row.status
+        if (!turnId) return null
+        if (status !== 'completed' && status !== 'failed' && status !== 'interrupted') return null
+        return {
+          id,
+          kind,
+          text,
+          createdAtIso,
+          turnId,
+          status,
+        }
+      }
+
+      if (kind === 'attention') {
+        const attentionKind = row.attentionKind
+        if (attentionKind !== 'approval' && attentionKind !== 'attention' && attentionKind !== 'error') return null
+        return {
+          id,
+          kind,
+          text,
+          createdAtIso,
+          attentionKind,
+        }
+      }
+
+      return null
+    })
+    .filter((entry): entry is UiSharedSessionTimelineEntry => entry !== null)
+}
+
+function normalizeSharedSessionSnapshot(value: unknown): UiSharedSessionSnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const sessionId = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
+  const sourceThreadId = typeof row.sourceThreadId === 'string' ? row.sourceThreadId.trim() : ''
+  const updatedAtIso = typeof row.updatedAtIso === 'string' ? row.updatedAtIso.trim() : ''
+  if (!sessionId || !sourceThreadId || !updatedAtIso) return null
+
+  const title = typeof row.title === 'string' && row.title.trim().length > 0
+    ? row.title.trim()
+    : sessionId
+  const latestTurnSummaryRow =
+    row.latestTurnSummary && typeof row.latestTurnSummary === 'object' && !Array.isArray(row.latestTurnSummary)
+      ? (row.latestTurnSummary as Record<string, unknown>)
+      : null
+  const latestTurnSummary = latestTurnSummaryRow
+    ? (() => {
+        const turnId = typeof latestTurnSummaryRow.turnId === 'string' ? latestTurnSummaryRow.turnId.trim() : ''
+        const status = latestTurnSummaryRow.status
+        if (!turnId) return null
+        if (status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'interrupted') {
+          return null
+        }
+        const normalizedStatus: 'running' | 'completed' | 'failed' | 'interrupted' = status
+        return {
+          turnId,
+          status: normalizedStatus,
+          summary: typeof latestTurnSummaryRow.summary === 'string' && latestTurnSummaryRow.summary.trim().length > 0
+            ? latestTurnSummaryRow.summary.trim()
+            : null,
+          startedAtIso: typeof latestTurnSummaryRow.startedAtIso === 'string' && latestTurnSummaryRow.startedAtIso.trim().length > 0
+            ? latestTurnSummaryRow.startedAtIso.trim()
+            : null,
+          completedAtIso: typeof latestTurnSummaryRow.completedAtIso === 'string' && latestTurnSummaryRow.completedAtIso.trim().length > 0
+            ? latestTurnSummaryRow.completedAtIso.trim()
+            : null,
+        }
+      })()
+    : null
+
+  const attentionRow =
+    row.attention && typeof row.attention === 'object' && !Array.isArray(row.attention)
+      ? (row.attention as Record<string, unknown>)
+      : {}
+  const capabilitiesRow =
+    row.capabilities && typeof row.capabilities === 'object' && !Array.isArray(row.capabilities)
+      ? (row.capabilities as Record<string, unknown>)
+      : {}
+
+  return {
+    sessionId,
+    sourceThreadId,
+    sourceConversationId: typeof row.sourceConversationId === 'string' && row.sourceConversationId.trim().length > 0
+      ? row.sourceConversationId.trim()
+      : null,
+    title,
+    cwd: typeof row.cwd === 'string' && row.cwd.trim().length > 0 ? row.cwd.trim() : null,
+    owner: normalizeSharedSessionOwner(row.owner),
+    ownerInstanceId: typeof row.ownerInstanceId === 'string' && row.ownerInstanceId.trim().length > 0
+      ? row.ownerInstanceId.trim()
+      : null,
+    ownerLeaseExpiresAtIso: typeof row.ownerLeaseExpiresAtIso === 'string' && row.ownerLeaseExpiresAtIso.trim().length > 0
+      ? row.ownerLeaseExpiresAtIso.trim()
+      : null,
+    state: normalizeSharedSessionState(row.state),
+    activeTurnId: typeof row.activeTurnId === 'string' && row.activeTurnId.trim().length > 0
+      ? row.activeTurnId.trim()
+      : null,
+    updatedAtIso,
+    timeline: normalizeSharedSessionTimelineEntries(row.timeline),
+    latestTurnSummary,
+    attention: {
+      pendingApprovalCount:
+        typeof attentionRow.pendingApprovalCount === 'number' && Number.isFinite(attentionRow.pendingApprovalCount)
+          ? Math.max(0, Math.trunc(attentionRow.pendingApprovalCount))
+          : 0,
+      pendingApprovalKinds: Array.isArray(attentionRow.pendingApprovalKinds)
+        ? attentionRow.pendingApprovalKinds
+          .map((value) => readSharedSessionApprovalKind(value))
+          .filter((value): value is UiSharedSessionApprovalKind => value !== null)
+        : [],
+      pendingAttentionCount:
+        typeof attentionRow.pendingAttentionCount === 'number' && Number.isFinite(attentionRow.pendingAttentionCount)
+          ? Math.max(0, Math.trunc(attentionRow.pendingAttentionCount))
+          : 0,
+      latestErrorMessage: typeof attentionRow.latestErrorMessage === 'string' && attentionRow.latestErrorMessage.trim().length > 0
+        ? attentionRow.latestErrorMessage.trim()
+        : null,
+      requiresReturnToOwner: attentionRow.requiresReturnToOwner === true,
+    },
+    capabilities: {
+      canViewHistory: capabilitiesRow.canViewHistory !== false,
+      canRequestTakeover: capabilitiesRow.canRequestTakeover === true,
+      canApproveInCurrentClient: capabilitiesRow.canApproveInCurrentClient === true,
+    },
+  }
+}
+
+function normalizeChangedFiles(value: unknown): UiWorkspaceDiffSnapshot['files'] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((file) => {
+      if (!file || typeof file !== 'object' || Array.isArray(file)) return null
+      const row = file as Partial<UiWorkspaceDiffSnapshot['files'][number]>
+      const path = typeof row.path === 'string' ? row.path.trim() : ''
+      if (!path) return null
+      return {
+        path,
+        additions: typeof row.additions === 'number' && Number.isFinite(row.additions) ? Math.max(0, Math.trunc(row.additions)) : 0,
+        deletions: typeof row.deletions === 'number' && Number.isFinite(row.deletions) ? Math.max(0, Math.trunc(row.deletions)) : 0,
+        diff: typeof row.diff === 'string' ? row.diff : '',
+      }
+    })
+    .filter((file): file is UiWorkspaceDiffSnapshot['files'][number] => file !== null)
+}
+
+function normalizeTurnFileChangesFallback(value: unknown): UiTurnFileChanges | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const row = value as Partial<UiTurnFileChanges>
+  const turnId = typeof row.turnId === 'string' ? row.turnId.trim() : ''
+  const files = normalizeChangedFiles(row.files)
+  if (!turnId || files.length === 0) return null
+
+  const totalAdditions = typeof row.totalAdditions === 'number' && Number.isFinite(row.totalAdditions)
+    ? Math.max(0, Math.trunc(row.totalAdditions))
+    : files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = typeof row.totalDeletions === 'number' && Number.isFinite(row.totalDeletions)
+    ? Math.max(0, Math.trunc(row.totalDeletions))
+    : files.reduce((sum, file) => sum + file.deletions, 0)
+
+  return {
+    turnId,
+    files,
+    totalAdditions,
+    totalDeletions,
+  }
+}
+
+function normalizeWorkspaceDiffSnapshot(value: unknown, fallbackCwd: string, fallbackMode: UiWorkspaceDiffMode): UiWorkspaceDiffSnapshot {
+  const row = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Partial<UiWorkspaceDiffSnapshot>)
+    : {}
+  const files = normalizeChangedFiles(row.files)
+  const totalAdditions = typeof row.totalAdditions === 'number' && Number.isFinite(row.totalAdditions)
+    ? Math.max(0, Math.trunc(row.totalAdditions))
+    : files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = typeof row.totalDeletions === 'number' && Number.isFinite(row.totalDeletions)
+    ? Math.max(0, Math.trunc(row.totalDeletions))
+    : files.reduce((sum, file) => sum + file.deletions, 0)
+  return {
+    mode: normalizeWorkspaceDiffMode(row.mode ?? fallbackMode),
+    cwd: typeof row.cwd === 'string' && row.cwd.trim().length > 0 ? row.cwd.trim() : fallbackCwd,
+    label: typeof row.label === 'string' ? row.label : '',
+    baseRef: typeof row.baseRef === 'string' && row.baseRef.trim().length > 0 ? row.baseRef.trim() : null,
+    targetRef: typeof row.targetRef === 'string' && row.targetRef.trim().length > 0 ? row.targetRef.trim() : null,
+    warning: typeof row.warning === 'string' && row.warning.trim().length > 0 ? row.warning : null,
+    files,
+    totalAdditions,
+    totalDeletions,
+  }
 }
 
 function toModelReasoningSupport(model: Model): ModelReasoningSupport {
@@ -142,6 +560,21 @@ async function getThreadMessagesV2(threadId: string): Promise<UiMessage[]> {
   return normalizeThreadMessagesV2(payload)
 }
 
+async function getThreadFileChangesFallbackV2(
+  threadId: string,
+  options: RpcCallOptions = {},
+): Promise<UiTurnFileChanges | null> {
+  try {
+    const payload = await fetchThreadFileChangesFallbackRequest(threadId, options)
+    return normalizeTurnFileChangesFallback(payload)
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    return null
+  }
+}
+
 async function getThreadConversationDataV2(
   threadId: string,
   options: RpcCallOptions = {},
@@ -150,9 +583,11 @@ async function getThreadConversationDataV2(
     threadId,
     includeTurns: true,
   }, options)
+  const threadReadFileChanges = normalizeLatestTurnFileChangesV2(payload)
+  const fileChanges = threadReadFileChanges ?? await getThreadFileChangesFallbackV2(threadId, options)
   return {
     messages: normalizeThreadMessagesV2(payload),
-    fileChanges: normalizeLatestTurnFileChangesV2(payload),
+    fileChanges,
     inProgress: normalizeThreadInProgressV2(payload),
     activeTurnId: normalizeActiveTurnIdV2(payload),
   }
@@ -214,6 +649,33 @@ export async function replyToServerRequest(
 
 export async function getPendingServerRequests(): Promise<unknown[]> {
   return fetchPendingServerRequests()
+}
+
+export async function getPersistedServerRequests(): Promise<UiPersistedServerRequest[]> {
+  const rows = await fetchPersistedServerRequests()
+  return rows
+    .map((row) => normalizePersistedServerRequest(row))
+    .filter((row): row is UiPersistedServerRequest => row !== null)
+}
+
+export async function getSharedSessionSnapshots(): Promise<UiSharedSessionSnapshot[]> {
+  const rows = await fetchSharedSessionSnapshotsRequest()
+  return rows
+    .map((row) => normalizeSharedSessionSnapshot(row))
+    .filter((row): row is UiSharedSessionSnapshot => row !== null)
+}
+
+export async function getSharedSessionSnapshot(sessionId: string): Promise<UiSharedSessionSnapshot | null> {
+  const row = await fetchSharedSessionSnapshotRequest(sessionId)
+  return normalizeSharedSessionSnapshot(row)
+}
+
+export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+  const normalizedRequestIds = requestIds
+    .filter((value) => Number.isInteger(value))
+    .map((value) => Math.trunc(value))
+  if (normalizedRequestIds.length === 0) return []
+  return dismissPersistedServerRequestsRequest(Array.from(new Set(normalizedRequestIds)))
 }
 
 export async function resumeThread(threadId: string): Promise<void> {
@@ -550,6 +1012,95 @@ export async function fetchWorkspaceChanges(cwd: string): Promise<UiTurnFileChan
   }
 }
 
+export async function fetchWorkspaceGitStatus(cwd: string): Promise<UiWorkspaceGitStatus | null> {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return null
+
+  const query = new URLSearchParams({ cwd: normalizedCwd })
+  const payload = await fetchJson<Partial<UiWorkspaceGitStatus>>(
+    `/codex-api/git/status?${query.toString()}`,
+    `Failed to read workspace git status for ${normalizedCwd}`,
+    'git/status',
+  )
+
+  return {
+    cwd: typeof payload.cwd === 'string' && payload.cwd.trim().length > 0 ? payload.cwd : normalizedCwd,
+    isRepo: payload.isRepo === true,
+    isDirty: payload.isDirty === true,
+    currentBranch: typeof payload.currentBranch === 'string' ? payload.currentBranch.trim() : '',
+    dirtySummary: normalizeWorkspaceDirtySummary(payload.dirtySummary),
+    dirtyEntries: normalizeWorkspaceDirtyEntries(payload.dirtyEntries),
+  }
+}
+
+export async function fetchWorkspaceBranches(cwd: string): Promise<UiWorkspaceBranchList | null> {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return null
+
+  const query = new URLSearchParams({ cwd: normalizedCwd })
+  const payload = await fetchJson<Partial<UiWorkspaceBranchList>>(
+    `/codex-api/git/branches?${query.toString()}`,
+    `Failed to read workspace branches for ${normalizedCwd}`,
+    'git/branches',
+  )
+
+  const branches = Array.isArray(payload.branches)
+    ? payload.branches
+      .filter((branch): branch is string => typeof branch === 'string')
+      .map((branch) => branch.trim())
+      .filter((branch) => branch.length > 0)
+    : []
+
+  return {
+    cwd: typeof payload.cwd === 'string' && payload.cwd.trim().length > 0 ? payload.cwd : normalizedCwd,
+    isRepo: payload.isRepo === true,
+    currentBranch: typeof payload.currentBranch === 'string' ? payload.currentBranch.trim() : '',
+    branches: Array.from(new Set(branches)),
+  }
+}
+
+export async function switchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const normalizedCwd = cwd.trim()
+  const normalizedBranch = branch.trim()
+  if (!normalizedCwd || !normalizedBranch) {
+    throw new Error('Workspace path and branch name are required')
+  }
+
+  await fetchJson<{ ok?: boolean }>(
+    '/codex-api/git/branch/switch',
+    `Failed to switch workspace branch to ${normalizedBranch}`,
+    'git/branch/switch',
+    {
+      method: 'POST',
+      body: {
+        cwd: normalizedCwd,
+        branch: normalizedBranch,
+      },
+    },
+  )
+}
+
+export async function createAndSwitchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const normalizedCwd = cwd.trim()
+  const normalizedBranch = branch.trim()
+  if (!normalizedCwd || !normalizedBranch) {
+    throw new Error('Workspace path and branch name are required')
+  }
+
+  await fetchJson<{ ok?: boolean }>(
+    '/codex-api/git/branch/create-and-switch',
+    `Failed to create workspace branch ${normalizedBranch}`,
+    'git/branch/create-and-switch',
+    {
+      method: 'POST',
+      body: {
+        cwd: normalizedCwd,
+        branch: normalizedBranch,
+      },
+    },
+  )
+}
+
 export async function fetchWorkspaceFullDiff(cwd: string): Promise<string> {
   const normalizedCwd = cwd.trim()
   if (!normalizedCwd) return ''
@@ -569,6 +1120,20 @@ export async function fetchWorkspaceFullDiff(cwd: string): Promise<string> {
 
   const record = payload as Record<string, unknown> | null
   return typeof record?.diff === 'string' ? record.diff : ''
+}
+
+export async function fetchWorkspaceDiffSnapshot(
+  cwd: string,
+  mode: UiWorkspaceDiffMode,
+  options: { baseBranch?: string | null } = {},
+): Promise<UiWorkspaceDiffSnapshot | null> {
+  const normalizedCwd = cwd.trim()
+  if (!normalizedCwd) return null
+  const normalizedMode = normalizeWorkspaceDiffMode(mode)
+  const payload = await fetchWorkspaceDiffModeRequest(normalizedCwd, normalizedMode, {
+    baseBranch: options.baseBranch ?? null,
+  })
+  return normalizeWorkspaceDiffSnapshot(payload, normalizedCwd, normalizedMode)
 }
 
 // `thread/loaded/list` returns sessions loaded in memory, not currently running turns.

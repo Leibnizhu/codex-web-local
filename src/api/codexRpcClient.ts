@@ -238,3 +238,208 @@ export async function fetchPendingServerRequests(): Promise<unknown[]> {
   const data = record?.data
   return Array.isArray(data) ? data : []
 }
+
+export async function fetchPersistedServerRequests(): Promise<unknown[]> {
+  const response = await fetch('/codex-api/server-requests/persisted')
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Persisted server requests failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'server-requests/persisted',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data) ? data : []
+}
+
+export async function fetchSharedSessionSnapshots(): Promise<unknown[]> {
+  const response = await fetch('/codex-api/shared-sessions')
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Shared session snapshots failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'shared-sessions/list',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data) ? data : []
+}
+
+export async function fetchSharedSessionSnapshot(sessionId: string): Promise<unknown | null> {
+  const normalizedSessionId = sessionId.trim()
+  if (!normalizedSessionId) {
+    return null
+  }
+
+  const response = await fetch(`/codex-api/shared-sessions/${encodeURIComponent(normalizedSessionId)}`)
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Shared session ${normalizedSessionId} failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'shared-sessions/read',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  return record?.data ?? null
+}
+
+export async function fetchThreadFileChangesFallback(
+  threadId: string,
+  options: RpcCallOptions = {},
+): Promise<unknown | null> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) {
+    return null
+  }
+
+  const query = new URLSearchParams({
+    threadId: normalizedThreadId,
+  })
+
+  let response: Response
+  try {
+    response = await fetch(`/codex-api/thread-file-changes/fallback?${query.toString()}`, {
+      signal: options.signal,
+    })
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    throw new CodexApiError(
+      error instanceof Error ? error.message : `Thread file changes fallback ${normalizedThreadId} failed before request was sent`,
+      {
+        code: 'network_error',
+        method: 'thread-file-changes/fallback',
+      },
+    )
+  }
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Thread file changes fallback ${normalizedThreadId} failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'thread-file-changes/fallback',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  return record?.data ?? null
+}
+
+export async function fetchWorkspaceDiffMode(
+  cwd: string,
+  mode: string,
+  options: { baseBranch?: string | null } = {},
+): Promise<unknown> {
+  const query = new URLSearchParams({
+    cwd,
+    mode,
+  })
+  const baseBranch = options.baseBranch?.trim() ?? ''
+  if (baseBranch) {
+    query.set('baseBranch', baseBranch)
+  }
+  const response = await fetch(`/codex-api/workspace-diff-mode?${query.toString()}`)
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Workspace diff mode failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'workspace-diff-mode',
+        status: response.status,
+      },
+    )
+  }
+
+  return payload
+}
+
+export async function dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+  const response = await fetch('/codex-api/server-requests/persisted/dismiss', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requestIds }),
+  })
+
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    throw new CodexApiError(
+      extractErrorMessage(payload, `Dismiss persisted server requests failed with HTTP ${response.status}`),
+      {
+        code: 'http_error',
+        method: 'server-requests/persisted/dismiss',
+        status: response.status,
+      },
+    )
+  }
+
+  const record = asRecord(payload)
+  const data = record?.data
+  return Array.isArray(data)
+    ? data.filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+    : []
+}

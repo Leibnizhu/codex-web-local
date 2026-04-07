@@ -122,6 +122,22 @@ export type UiServerRequest = {
   params: unknown
 }
 
+export type UiPersistedServerRequest = {
+  id: number
+  method: string
+  threadId: string
+  turnId: string
+  itemId: string
+  cwd: string
+  receivedAtIso: string
+  resolvedAtIso: string | null
+  resolutionKind: string | null
+  dismissedAtIso: string | null
+  dismissedReason: string | null
+  dismissedBy: 'user' | null
+  params: unknown
+}
+
 export type UiServerRequestReply = {
   id: number
   result?: unknown
@@ -136,6 +152,81 @@ export type UiLiveOverlay = {
   activityDetails: string[]
   reasoningText: string
   errorText: string
+}
+
+export type UiSharedSessionOwner = 'web' | 'terminal'
+
+export type UiSharedSessionState =
+  | 'idle'
+  | 'running'
+  | 'needs_attention'
+  | 'failed'
+  | 'interrupted'
+  | 'stale_owner'
+
+export type UiSharedSessionApprovalKind = 'command' | 'file_change'
+
+export type UiSharedSessionTimelineEntry =
+  | {
+      id: string
+      kind: 'user_message'
+      text: string
+      createdAtIso: string
+    }
+  | {
+      id: string
+      kind: 'assistant_message'
+      text: string
+      createdAtIso: string
+    }
+  | {
+      id: string
+      kind: 'turn_summary'
+      text: string
+      createdAtIso: string
+      turnId: string
+      status: 'completed' | 'failed' | 'interrupted'
+    }
+  | {
+      id: string
+      kind: 'attention'
+      text: string
+      createdAtIso: string
+      attentionKind: 'approval' | 'attention' | 'error'
+    }
+
+export type UiSharedSessionSnapshot = {
+  sessionId: string
+  sourceThreadId: string
+  sourceConversationId: string | null
+  title: string
+  cwd: string | null
+  owner: UiSharedSessionOwner
+  ownerInstanceId: string | null
+  ownerLeaseExpiresAtIso: string | null
+  state: UiSharedSessionState
+  activeTurnId: string | null
+  updatedAtIso: string
+  timeline: UiSharedSessionTimelineEntry[]
+  latestTurnSummary: {
+    turnId: string
+    status: 'running' | 'completed' | 'failed' | 'interrupted'
+    summary: string | null
+    startedAtIso: string | null
+    completedAtIso: string | null
+  } | null
+  attention: {
+    pendingApprovalCount: number
+    pendingApprovalKinds: UiSharedSessionApprovalKind[]
+    pendingAttentionCount: number
+    latestErrorMessage: string | null
+    requiresReturnToOwner: boolean
+  }
+  capabilities: {
+    canViewHistory: boolean
+    canRequestTakeover: boolean
+    canApproveInCurrentClient: boolean
+  }
 }
 
 export type UiProjectGroup = {
@@ -155,6 +246,144 @@ export type UiTurnFileChanges = {
   files: UiChangedFile[]
   totalAdditions: number
   totalDeletions: number
+}
+
+export type UiWorkspaceDiffMode =
+  | 'unstaged'
+  | 'staged'
+  | 'branch'
+  | 'lastCommit'
+  | 'gitStatus'
+
+export type UiWorkspaceDiffSnapshot = {
+  mode: UiWorkspaceDiffMode
+  cwd: string
+  label: string
+  baseRef: string | null
+  targetRef: string | null
+  warning: string | null
+  files: UiChangedFile[]
+  totalAdditions: number
+  totalDeletions: number
+}
+
+export type WorkspaceBranchState = {
+  isRepo: boolean
+  currentBranch: string
+  branches: string[]
+  baseBranch: string | null
+  isDetachedHead: boolean
+  isLoading: boolean
+  isSwitching: boolean
+}
+
+export type WorkspaceBranchBlockReason =
+  | 'not_repo'
+  | 'workspace_dirty'
+  | 'thread_in_progress'
+  | 'queued_messages'
+  | 'pending_server_requests'
+  | 'persisted_server_requests'
+
+export type UiWorkspaceDirtyKind =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted'
+  | 'unknown'
+
+export type UiWorkspaceDirtyEntry = {
+  path: string
+  x: string
+  y: string
+  kind: UiWorkspaceDirtyKind
+  staged: boolean
+  unstaged: boolean
+}
+
+export type UiWorkspaceDirtySummary = {
+  trackedModified: number
+  staged: number
+  untracked: number
+  conflicted: number
+  renamed: number
+  deleted: number
+}
+
+export type UiWorkspaceGitStatus = {
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+  dirtySummary: UiWorkspaceDirtySummary
+  dirtyEntries: UiWorkspaceDirtyEntry[]
+}
+
+export type UiWorkspaceBranchList = {
+  cwd: string
+  isRepo: boolean
+  currentBranch: string
+  branches: string[]
+}
+
+export type UiWorkspaceBranchState = {
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+  branches: string[]
+  dirtySummary: UiWorkspaceDirtySummary
+  dirtyEntries: UiWorkspaceDirtyEntry[]
+  isLoading: boolean
+  isSwitching: boolean
+  blockedReasons: WorkspaceBranchBlockReason[]
+}
+
+export type WorkspaceGuardState = {
+  blockedReasons: WorkspaceBranchBlockReason[]
+  livePendingRequestCount: number
+  persistedPendingRequestCount: number
+  queuedMessageCount: number
+  inProgressThreadCount: number
+}
+
+export type WorkspaceDiffState = {
+  selectedMode: UiWorkspaceDiffMode
+  snapshots: Partial<Record<UiWorkspaceDiffMode, UiWorkspaceDiffSnapshot>>
+  isLoadingByMode: Partial<Record<UiWorkspaceDiffMode, boolean>>
+  totalAdditions: number
+  totalDeletions: number
+}
+
+export type WorkspaceApprovalState = {
+  live: UiServerRequest[]
+  persisted: UiPersistedServerRequest[]
+}
+
+export type SessionApprovalState = {
+  globalLive: UiServerRequest[]
+  globalPersisted: UiPersistedServerRequest[]
+}
+
+export type WorkspaceModel = {
+  cwd: string
+  branch: WorkspaceBranchState
+  guard: WorkspaceGuardState
+  gitStatus: {
+    isDirty: boolean
+    summary: UiWorkspaceDirtySummary | null
+    entries: UiWorkspaceDirtyEntry[]
+    fetchedAt: string | null
+  }
+  diff: WorkspaceDiffState
+  approvals: WorkspaceApprovalState
+  ui: {
+    selectedPath: string | null
+    expandedPaths: string[]
+    lastOpenedAt: string | null
+  }
 }
 
 export type ThreadScrollState = {
