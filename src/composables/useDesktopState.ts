@@ -13,6 +13,7 @@ import {
   getCurrentModelConfig,
   getModelReasoningSupport,
   getPersistedServerRequests,
+  getSharedSessionSnapshots,
   getThreadConversationData,
   getPendingServerRequests,
   interruptThreadTurn,
@@ -38,6 +39,7 @@ import type {
     UiMessage,
     UiPersistedServerRequest,
     UiProjectGroup,
+    UiSharedSessionSnapshot,
   UiServerRequest,
   UiServerRequestReply,
   UiThread,
@@ -51,6 +53,8 @@ import type {
 import { normalizeTurnDiffToFileChanges } from '../api/normalizers/v2'
 import {
   loadAutoRefreshEnabled,
+  isFileChangesDebugEnabled,
+  loadLatestFileChangesMap,
   loadWorkspaceBaseBranchMap,
   loadProjectDisplayNames,
   loadProjectOrder,
@@ -60,6 +64,7 @@ import {
   loadThreadContextUsageMap,
   loadThreadScrollStateMap,
   saveAutoRefreshEnabled,
+  saveLatestFileChangesMap,
   saveWorkspaceBaseBranchMap,
   saveProjectDisplayNames,
   saveProjectOrder,
@@ -94,6 +99,7 @@ import {
   enqueueQueuedMessage,
   type QueuedMessageState,
 } from './desktop-state/queue-utils'
+import { isApprovalRequestMethod } from '../utils/approvalRequestDisplay'
 import {
   listPersistedServerRequestsForWorkspace as listPersistedServerRequestsForWorkspaceFromMap,
   listSelectedServerRequests,
@@ -210,6 +216,12 @@ function debugTokenUsageNotification(notification: RpcNotification): void {
   })
 }
 
+function debugFileChangesState(action: string, payload: Record<string, unknown>): void {
+  if (!isFileChangesDebugEnabled()) return
+  if (typeof window === 'undefined') return
+  console.debug(`[file-changes-state] ${action}`, payload)
+}
+
 function isNoRolloutError(error: unknown): error is CodexApiError {
   if (!(error instanceof CodexApiError)) return false
   if (error.status !== 502) return false
@@ -248,7 +260,8 @@ export function useDesktopState() {
   const activeTurnIdByThreadId = ref<Record<string, string>>({})
   const pendingServerRequestsByThreadId = ref<Record<string, UiServerRequest[]>>({})
   const persistedServerRequestsByThreadId = ref<Record<string, UiPersistedServerRequest[]>>({})
-  const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>({})
+  const sharedSessionSnapshots = ref<UiSharedSessionSnapshot[]>([])
+  const latestFileChangesByThreadId = ref<Record<string, UiTurnFileChanges>>(loadLatestFileChangesMap())
   const queuedMessagesByThreadId = ref<Record<string, QueuedMessageState[]>>({})
   const contextUsageByThreadId = ref<Record<string, UiThreadContextUsage>>(loadThreadContextUsageMap())
   const rateLimitUsage = ref<UiRateLimitUsage | null>(loadRateLimitUsage())
@@ -312,8 +325,43 @@ export function useDesktopState() {
   const globalLiveServerRequests = computed<UiServerRequest[]>(() => {
     return pendingServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
   })
+  const liveApprovalThreadIdSet = computed<Set<string>>(() => {
+    const threadIds = new Set<string>()
+    for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
+      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE) continue
+      if (!Array.isArray(requests) || requests.length === 0) continue
+      if (requests.some((request) => isApprovalRequestMethod(request.method))) {
+        threadIds.add(threadId)
+      }
+    }
+    return threadIds
+  })
   const globalPersistedServerRequests = computed<UiPersistedServerRequest[]>(() => {
     return persistedServerRequestsByThreadId.value[GLOBAL_SERVER_REQUEST_SCOPE] ?? []
+  })
+  const sharedSessionSnapshotBySessionId = computed<Record<string, UiSharedSessionSnapshot>>(() => {
+    const next: Record<string, UiSharedSessionSnapshot> = {}
+    for (const snapshot of sharedSessionSnapshots.value) {
+      if (!snapshot.sessionId) continue
+      next[snapshot.sessionId] = snapshot
+    }
+    return next
+  })
+  const sharedSessionSnapshotByThreadId = computed<Record<string, UiSharedSessionSnapshot>>(() => {
+    const next: Record<string, UiSharedSessionSnapshot> = {}
+    for (const snapshot of sharedSessionSnapshots.value) {
+      const threadId = snapshot.sourceThreadId.trim()
+      if (!threadId || next[threadId]) continue
+      next[threadId] = snapshot
+    }
+    return next
+  })
+  const selectedSharedSessionSnapshot = computed<UiSharedSessionSnapshot | null>(() => {
+    const threadId = selectedThreadId.value.trim()
+    if (!threadId) return null
+    return sharedSessionSnapshotByThreadId.value[threadId]
+      ?? sharedSessionSnapshotBySessionId.value[threadId]
+      ?? null
   })
   const selectedThreadFileChanges = computed<UiTurnFileChanges | null>(() => {
     const threadId = selectedThreadId.value
@@ -331,23 +379,34 @@ export function useDesktopState() {
     if (!threadId) return []
     return queuedMessagesByThreadId.value[threadId] ?? []
   })
-  const selectedWorkspaceModel = computed<WorkspaceModel | null>(() => {
-    const cwd = selectedThread.value?.cwd?.trim() ?? ''
-    if (!cwd) return null
-    const current = workspaceByCwd.value[cwd]
+  function getWorkspaceModelForCwd(cwd: string): WorkspaceModel | null {
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return null
+    const current = workspaceByCwd.value[normalizedCwd]
     if (current) return current
+    const loadingModel = createWorkspaceModel(normalizedCwd)
     return {
-      ...createWorkspaceModel(cwd),
+      ...loadingModel,
       branch: {
-        ...createWorkspaceModel(cwd).branch,
+        ...loadingModel.branch,
         isLoading: true,
       },
     }
-  })
-  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
-    const workspace = selectedWorkspaceModel.value
+  }
+
+  function getWorkspaceBranchStateForCwd(cwd: string): UiWorkspaceBranchState | null {
+    const workspace = getWorkspaceModelForCwd(cwd)
     if (!workspace) return null
     return workspaceBranchStateFromModel(workspace)
+  }
+
+  const selectedWorkspaceModel = computed<WorkspaceModel | null>(() => {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    return getWorkspaceModelForCwd(cwd)
+  })
+  const selectedWorkspaceBranchState = computed<UiWorkspaceBranchState | null>(() => {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    return getWorkspaceBranchStateForCwd(cwd)
   })
   const selectedWorkspaceDiffTotals = computed(() => ({
     additions: selectedWorkspaceModel.value?.diff.totalAdditions ?? 0,
@@ -803,6 +862,13 @@ export function useDesktopState() {
     return refreshWorkspaceBranchState(cwd, options)
   }
 
+  async function refreshWorkspaceBranchStateForCwd(
+    cwd: string,
+    options: { includeBranches?: boolean; silent?: boolean } = {},
+  ): Promise<UiWorkspaceBranchState | null> {
+    return refreshWorkspaceBranchState(cwd, options)
+  }
+
   async function refreshWorkspaceDiffTotals(cwd: string): Promise<{ additions: number; deletions: number }> {
     const normalizedCwd = cwd.trim()
     if (!normalizedCwd) return { ...EMPTY_WORKSPACE_DIFF_TOTALS }
@@ -975,43 +1041,53 @@ export function useDesktopState() {
     return unstagedSnapshot
   }
 
-  async function runSelectedWorkspaceBranchAction(
+  async function runWorkspaceBranchActionForCwd(
+    cwd: string,
     action: (cwd: string) => Promise<void>,
     fallbackMessage: string,
   ): Promise<boolean> {
-    const cwd = selectedThread.value?.cwd?.trim() ?? ''
-    if (!cwd) return false
+    const normalizedCwd = cwd.trim()
+    if (!normalizedCwd) return false
 
-    const currentState = await refreshSelectedWorkspaceBranchState({ includeBranches: true, silent: true })
+    const currentState = await refreshWorkspaceBranchState(normalizedCwd, { includeBranches: true, silent: true })
     if (!currentState) return false
     if (currentState.blockedReasons.length > 0) {
       error.value = fallbackMessage
       return false
     }
 
-    upsertWorkspaceBranchState(cwd, (current) => ({
+    upsertWorkspaceBranchState(normalizedCwd, (current) => ({
       ...current,
       isSwitching: true,
     }))
 
     try {
-      await action(cwd)
+      await action(normalizedCwd)
       await loadThreads()
       if (selectedThreadId.value) {
         await loadMessages(selectedThreadId.value, { silent: true })
       }
-      await refreshWorkspaceBranchState(cwd, { includeBranches: true, silent: true })
+      await refreshWorkspaceBranchState(normalizedCwd, { includeBranches: true, silent: true })
       return true
     } catch (unknownError) {
       error.value = unknownError instanceof Error ? unknownError.message : fallbackMessage
       return false
     } finally {
-      upsertWorkspaceBranchState(cwd, (current) => ({
+      upsertWorkspaceBranchState(normalizedCwd, (current) => ({
         ...current,
         isSwitching: false,
-        blockedReasons: computeWorkspaceBranchBlockedReasons(cwd, current),
+        blockedReasons: computeWorkspaceBranchBlockedReasons(normalizedCwd, current),
       }))
     }
+  }
+
+  async function runSelectedWorkspaceBranchAction(
+    action: (cwd: string) => Promise<void>,
+    fallbackMessage: string,
+  ): Promise<boolean> {
+    const cwd = selectedThread.value?.cwd?.trim() ?? ''
+    if (!cwd) return false
+    return runWorkspaceBranchActionForCwd(cwd, action, fallbackMessage)
   }
 
   async function switchSelectedWorkspaceBranch(targetBranch: string): Promise<boolean> {
@@ -1028,6 +1104,26 @@ export function useDesktopState() {
     if (!normalizedBranch) return false
     return runSelectedWorkspaceBranchAction(
       (cwd) => createAndSwitchWorkspaceBranch(cwd, normalizedBranch),
+      '当前工作区暂时不能创建分支',
+    )
+  }
+
+  async function switchWorkspaceBranchForCwd(cwd: string, targetBranch: string): Promise<boolean> {
+    const normalizedBranch = targetBranch.trim()
+    if (!normalizedBranch) return false
+    return runWorkspaceBranchActionForCwd(
+      cwd,
+      (targetCwd) => switchWorkspaceBranch(targetCwd, normalizedBranch),
+      '当前工作区暂时不能切换分支',
+    )
+  }
+
+  async function createAndSwitchWorkspaceBranchForCwd(cwd: string, targetBranch: string): Promise<boolean> {
+    const normalizedBranch = targetBranch.trim()
+    if (!normalizedBranch) return false
+    return runWorkspaceBranchActionForCwd(
+      cwd,
+      (targetCwd) => createAndSwitchWorkspaceBranch(targetCwd, normalizedBranch),
       '当前工作区暂时不能创建分支',
     )
   }
@@ -1152,6 +1248,7 @@ export function useDesktopState() {
     turnErrorByThreadId.value = pruneThreadStateMap(turnErrorByThreadId.value, activeThreadIds)
     activeTurnIdByThreadId.value = pruneThreadStateMap(activeTurnIdByThreadId.value, activeThreadIds)
     latestFileChangesByThreadId.value = pruneThreadStateMap(latestFileChangesByThreadId.value, activeThreadIds)
+    saveLatestFileChangesMap(latestFileChangesByThreadId.value)
     queuedMessagesByThreadId.value = pruneThreadStateMap(queuedMessagesByThreadId.value, activeThreadIds)
     contextUsageByThreadId.value = pruneThreadStateMap(contextUsageByThreadId.value, activeThreadIds)
     saveThreadContextUsageMap(contextUsageByThreadId.value)
@@ -1402,6 +1499,18 @@ export function useDesktopState() {
     syncWorkspaceBranchBlockedReasons()
   }
 
+  function replaceSharedSessionSnapshots(rows: UiSharedSessionSnapshot[]): void {
+    const bySessionId = new Map<string, UiSharedSessionSnapshot>()
+    for (const row of rows) {
+      const sessionId = row.sessionId.trim()
+      if (!sessionId) continue
+      bySessionId.set(sessionId, row)
+    }
+    sharedSessionSnapshots.value = Array.from(bySessionId.values()).sort((first, second) =>
+      second.updatedAtIso.localeCompare(first.updatedAtIso),
+    )
+  }
+
   function removePersistedServerRequestById(requestId: number): void {
     const next: Record<string, UiPersistedServerRequest[]> = {}
     for (const [threadId, requests] of Object.entries(persistedServerRequestsByThreadId.value)) {
@@ -1419,6 +1528,7 @@ export function useDesktopState() {
       const request = normalizeServerRequest(notification.params, GLOBAL_SERVER_REQUEST_SCOPE)
       if (!request) return true
       upsertPendingServerRequest(request)
+      void refreshSharedSessionSnapshots({ silent: true })
       return true
     }
 
@@ -1429,6 +1539,7 @@ export function useDesktopState() {
         removePendingServerRequestById(id)
         removePersistedServerRequestById(id)
       }
+      void refreshSharedSessionSnapshots({ silent: true })
       return true
     }
 
@@ -1479,6 +1590,7 @@ export function useDesktopState() {
       setThreadInProgress(startedTurn.threadId, true)
       if (latestFileChangesByThreadId.value[startedTurn.threadId]) {
         latestFileChangesByThreadId.value = omitKey(latestFileChangesByThreadId.value, startedTurn.threadId)
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
       }
       if (eventUnreadByThreadId.value[startedTurn.threadId]) {
         eventUnreadByThreadId.value = omitKey(eventUnreadByThreadId.value, startedTurn.threadId)
@@ -1493,8 +1605,18 @@ export function useDesktopState() {
           ...latestFileChangesByThreadId.value,
           [turnDiffUpdate.threadId]: normalized,
         }
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
+        debugFileChangesState('turn-diff-update', {
+          threadId: turnDiffUpdate.threadId,
+          turnId: normalized.turnId,
+          fileCount: normalized.files.length,
+        })
       } else if (latestFileChangesByThreadId.value[turnDiffUpdate.threadId]) {
         latestFileChangesByThreadId.value = omitKey(latestFileChangesByThreadId.value, turnDiffUpdate.threadId)
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
+        debugFileChangesState('turn-diff-clear', {
+          threadId: turnDiffUpdate.threadId,
+        })
       }
     }
 
@@ -1729,6 +1851,18 @@ export function useDesktopState() {
           ...latestFileChangesByThreadId.value,
           [threadId]: fileChanges,
         }
+        saveLatestFileChangesMap(latestFileChangesByThreadId.value)
+        debugFileChangesState('load-messages:file-changes', {
+          threadId,
+          turnId: fileChanges.turnId,
+          fileCount: fileChanges.files.length,
+        })
+      } else {
+        debugFileChangesState('load-messages:no-file-changes', {
+          threadId,
+          cachedTurnId: latestFileChangesByThreadId.value[threadId]?.turnId ?? null,
+          cachedFileCount: latestFileChangesByThreadId.value[threadId]?.files.length ?? 0,
+        })
       }
 
       const previousLiveAgent = liveAgentMessagesByThreadId.value[threadId] ?? []
@@ -1779,6 +1913,7 @@ export function useDesktopState() {
         loadThreads(),
         refreshModelPreferences(),
         refreshRateLimitUsage({ force: true }),
+        refreshSharedSessionSnapshots({ silent: true }),
       ])
       await loadMessages(selectedThreadId.value)
       await refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
@@ -1793,6 +1928,12 @@ export function useDesktopState() {
     selectThreadLoadAbortController?.abort()
     selectThreadLoadAbortController = threadId ? new AbortController() : null
     setSelectedThreadId(threadId)
+    debugFileChangesState('select-thread', {
+      threadId,
+      hasPersistedFileChanges: Boolean(latestFileChangesByThreadId.value[threadId]),
+      persistedTurnId: latestFileChangesByThreadId.value[threadId]?.turnId ?? null,
+      persistedFileCount: latestFileChangesByThreadId.value[threadId]?.files.length ?? 0,
+    })
     if (!threadId) return
 
     void refreshSelectedWorkspaceBranchState({ includeBranches: false, silent: true })
@@ -2092,6 +2233,7 @@ export function useDesktopState() {
     isPolling.value = true
 
     try {
+      await refreshSharedSessionSnapshots({ silent: true })
       const now = Date.now()
       const shouldRefreshThreadList = now - lastThreadListRefreshAtMs >= THREAD_LIST_AUTO_REFRESH_INTERVAL_MS
       if (shouldRefreshThreadList) {
@@ -2171,6 +2313,7 @@ export function useDesktopState() {
     if (isAutoRefreshEnabled.value) {
       startAutoRefreshTimer()
     }
+    void refreshSharedSessionSnapshots({ silent: true })
     void loadPendingServerRequestsFromBridge()
     void loadPersistedServerRequestsFromBridge()
     stopNotificationStream = subscribeCodexNotifications((notification) => {
@@ -2203,6 +2346,16 @@ export function useDesktopState() {
     }
   }
 
+  async function refreshSharedSessionSnapshots(options: { silent?: boolean } = {}): Promise<void> {
+    try {
+      const rows = await getSharedSessionSnapshots()
+      replaceSharedSessionSnapshots(rows)
+    } catch (unknownError) {
+      if (options.silent === true) return
+      error.value = unknownError instanceof Error ? unknownError.message : 'Failed to load shared session snapshots'
+    }
+  }
+
   async function respondToPendingServerRequest(reply: UiServerRequestReply): Promise<void> {
     try {
       await replyToServerRequest(reply.id, {
@@ -2226,6 +2379,9 @@ export function useDesktopState() {
       const dismissedIds = await dismissPersistedServerRequestsRequest(normalizedRequestIds)
       for (const requestId of dismissedIds) {
         removePersistedServerRequestById(requestId)
+      }
+      if (dismissedIds.length > 0) {
+        void refreshSharedSessionSnapshots({ silent: true })
       }
       return dismissedIds.length > 0
     } catch (unknownError) {
@@ -2314,7 +2470,11 @@ export function useDesktopState() {
     selectedThreadPersistedServerRequests,
     selectedWorkspacePersistedServerRequests,
     globalLiveServerRequests,
+    liveApprovalThreadIdSet,
     globalPersistedServerRequests,
+    sharedSessionSnapshots,
+    sharedSessionSnapshotByThreadId,
+    selectedSharedSessionSnapshot,
     selectedWorkspaceModel,
     selectedWorkspaceDiffTotals,
     selectedThreadFileChanges,
@@ -2346,7 +2506,10 @@ export function useDesktopState() {
     sendMessageToNewThread,
     interruptSelectedThreadTurn,
     compactSelectedThreadContext,
+    getWorkspaceModelForCwd,
+    getWorkspaceBranchStateForCwd,
     refreshSelectedWorkspaceBranchState,
+    refreshWorkspaceBranchStateForCwd,
     refreshSelectedWorkspaceDiffTotals,
     fetchWorkspaceDiffSnapshotForMode,
     openPreferredWorkspaceDiffSnapshot,
@@ -2354,11 +2517,14 @@ export function useDesktopState() {
     setWorkspaceBaseBranch,
     switchSelectedWorkspaceBranch,
     createAndSwitchSelectedWorkspaceBranch,
+    switchWorkspaceBranchForCwd,
+    createAndSwitchWorkspaceBranchForCwd,
     setSelectedModelId,
     setSelectedReasoningEffort,
     setSelectedChatMode,
     respondToPendingServerRequest,
     dismissPersistedServerRequests,
+    refreshSharedSessionSnapshots,
     renameProject,
     removeProject,
     reorderProject,

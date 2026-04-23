@@ -80,6 +80,86 @@ const UI_TEXT = {
     zh: ({ time }) => `排队于 ${String(time)}`,
     en: ({ time }) => `Queued at ${String(time)}`,
   },
+  'app.sharedSessionStatusIdle': {
+    zh: '已同步',
+    en: 'Synced',
+  },
+  'app.sharedSessionStatusRunning': {
+    zh: '正在继续',
+    en: 'Running',
+  },
+  'app.sharedSessionStatusNeedsAttention': {
+    zh: '等待处理',
+    en: 'Needs attention',
+  },
+  'app.sharedSessionStatusFailed': {
+    zh: '本轮失败',
+    en: 'Failed',
+  },
+  'app.sharedSessionStatusInterrupted': {
+    zh: '已中断',
+    en: 'Interrupted',
+  },
+  'app.sharedSessionStatusStaleOwner': {
+    zh: '控制端可能过期',
+    en: 'Owner may be stale',
+  },
+  'app.sharedSessionOwnerWeb': {
+    zh: 'Web',
+    en: 'Web',
+  },
+  'app.sharedSessionOwnerTerminal': {
+    zh: '终端',
+    en: 'Terminal',
+  },
+  'app.sharedSessionControlledBy': {
+    zh: ({ owner }) => `当前由 ${String(owner)} 控制`,
+    en: ({ owner }) => `Currently controlled by ${String(owner)}`,
+  },
+  'app.sharedSessionLatestTurn': {
+    zh: '最近进展已同步',
+    en: 'Latest progress synced',
+  },
+  'app.sharedSessionPendingApprovals': {
+    zh: ({ count }) => `${String(count)} 条授权待处理`,
+    en: ({ count }) => `${String(count)} approval(s) pending`,
+  },
+  'app.sharedSessionPendingApprovalsShort': {
+    zh: ({ count }) => `${String(count)} 条授权`,
+    en: ({ count }) => `${String(count)} approval(s)`,
+  },
+  'app.sharedSessionPendingAttentionRequests': {
+    zh: ({ count }) => `${String(count)} 条待处理请求`,
+    en: ({ count }) => `${String(count)} request(s) need attention`,
+  },
+  'app.sharedSessionPendingAttentionRequestsShort': {
+    zh: ({ count }) => `${String(count)} 条待处理`,
+    en: ({ count }) => `${String(count)} pending item(s)`,
+  },
+  'app.sharedSessionPersistedApprovalRecords': {
+    zh: ({ count }) => `${String(count)} 条遗留授权记录`,
+    en: ({ count }) => `${String(count)} stale approval record(s)`,
+  },
+  'app.sharedSessionPersistedApprovalRecordsShort': {
+    zh: ({ count }) => `${String(count)} 条遗留记录`,
+    en: ({ count }) => `${String(count)} stale record(s)`,
+  },
+  'app.sharedSessionApprovalNeedsReplay': {
+    zh: ({ count }) => `${String(count)} 条授权记录已失效，请重新触发审批`,
+    en: ({ count }) => `${String(count)} approval record(s) expired; re-trigger approval to continue`,
+  },
+  'app.sharedSessionReturnToOwner': {
+    zh: '请返回控制端继续处理',
+    en: 'Return to the owner client to continue',
+  },
+  'app.sharedSessionActiveTurn': {
+    zh: '活动 Turn',
+    en: 'Active turn',
+  },
+  'app.sharedSessionLatestError': {
+    zh: ({ message }) => `最近错误：${String(message)}`,
+    en: ({ message }) => `Latest error: ${String(message)}`,
+  },
   'composer.model': {
     zh: '模型',
     en: 'Model',
@@ -492,6 +572,46 @@ const UI_TEXT = {
     zh: '当前会话还没有消息',
     en: 'No messages in this thread yet.',
   },
+  'threadConversation.approvalCommandTitle': {
+    zh: '是否允许执行此命令？',
+    en: 'Allow this command to run?',
+  },
+  'threadConversation.approvalFileTitle': {
+    zh: '是否允许应用这些文件改动？',
+    en: 'Allow these file changes?',
+  },
+  'threadConversation.approvalSubmit': {
+    zh: '提交',
+    en: 'Submit',
+  },
+  'threadConversation.approvalSkip': {
+    zh: '跳过',
+    en: 'Skip',
+  },
+  'threadConversation.approvalCwdLabel': {
+    zh: '执行目录',
+    en: 'Working directory',
+  },
+  'threadConversation.approvalReasonLabel': {
+    zh: '触发原因',
+    en: 'Reason',
+  },
+  'threadConversation.approvalSummaryLabel': {
+    zh: '预计操作',
+    en: 'Planned actions',
+  },
+  'threadConversation.approvalGrantRootLabel': {
+    zh: '授权目录',
+    en: 'Granted root',
+  },
+  'threadConversation.approvalFileSummary': {
+    zh: ({ count, additions, deletions }) => `共 ${String(count)} 个文件，+${String(additions)} / -${String(deletions)}`,
+    en: ({ count, additions, deletions }) => `${String(count)} files, +${String(additions)} / -${String(deletions)}`,
+  },
+  'threadConversation.approvalOpenDiff': {
+    zh: '查看完整 Diff',
+    en: 'Open full diff',
+  },
   'threadConversation.otherAnswer': {
     zh: '其他答案',
     en: 'Other answer',
@@ -539,6 +659,18 @@ const UI_TEXT = {
   'threadConversation.workedFor': {
     zh: ({ duration }) => `耗时 ${String(duration)}`,
     en: ({ duration }) => `Worked for ${String(duration)}`,
+  },
+  'threadConversation.copy': {
+    zh: '复制',
+    en: 'Copy',
+  },
+  'threadConversation.copied': {
+    zh: '已复制',
+    en: 'Copied',
+  },
+  'threadConversation.copyMessage': {
+    zh: '复制消息',
+    en: 'Copy message',
   },
   'sidebar.expand': {
     zh: '展开侧边栏',

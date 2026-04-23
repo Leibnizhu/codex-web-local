@@ -152,11 +152,31 @@
               <IconTablerChevronDown class="thread-composer-branch-chevron" />
             </button>
 
+            <button
+              v-if="isBranchMenuOpen"
+              class="thread-composer-branch-sheet-backdrop"
+              type="button"
+              aria-label="关闭分支面板"
+              tabindex="-1"
+              @click="closeBranchMenu"
+            />
+
             <div
               v-if="isBranchMenuOpen"
-              class="thread-composer-branch-menu"
+              class="thread-composer-branch-menu thread-composer-branch-sheet"
             >
-              <p class="thread-composer-branch-menu-title">{{ tUi(normalizedLanguage, 'composer.branchMenuTitle') }}</p>
+              <div class="thread-composer-branch-menu-header">
+                <div class="thread-composer-branch-sheet-handle" aria-hidden="true" />
+                <p class="thread-composer-branch-menu-title">{{ tUi(normalizedLanguage, 'composer.branchMenuTitle') }}</p>
+                <button
+                  type="button"
+                  class="thread-composer-branch-sheet-close"
+                  aria-label="关闭分支面板"
+                  @click="closeBranchMenu"
+                >
+                  <IconTablerX class="thread-composer-branch-sheet-close-icon" />
+                </button>
+              </div>
               <p v-if="branchBlockedSummary" class="thread-composer-branch-menu-hint">
                 {{ branchBlockedSummary }}
               </p>
@@ -392,6 +412,7 @@ import IconTablerBulb from '../icons/IconTablerBulb.vue'
 import IconModeToggleMenu from '../icons/IconModeToggleMenu.vue'
 import IconTablerPaperclip from '../icons/IconTablerPaperclip.vue'
 import IconTablerTerminal2 from '../icons/IconTablerTerminal2.vue'
+import IconTablerX from '../icons/IconTablerX.vue'
 import { getModelReasoningSupport } from '../../api/codexGateway'
 import ComposerDropdown from './ComposerDropdown.vue'
 
@@ -1143,7 +1164,7 @@ watch(
 }
 
 .thread-composer-status-chip {
-  @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-600;
+  @apply inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-600 whitespace-nowrap;
 }
 
 .thread-composer-status-chip-action {
@@ -1174,8 +1195,28 @@ watch(
   @apply absolute bottom-[calc(100%+8px)] right-0 z-30 w-64 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg;
 }
 
+.thread-composer-branch-sheet-backdrop {
+  @apply hidden;
+}
+
+.thread-composer-branch-menu-header {
+  @apply flex items-center gap-2;
+}
+
+.thread-composer-branch-sheet-handle {
+  @apply hidden;
+}
+
 .thread-composer-branch-menu-title {
-  @apply m-0 text-[11px] font-semibold text-zinc-800;
+  @apply m-0 min-w-0 flex-1 text-[11px] font-semibold text-zinc-800;
+}
+
+.thread-composer-branch-sheet-close {
+  @apply hidden;
+}
+
+.thread-composer-branch-sheet-close-icon {
+  @apply h-3.5 w-3.5;
 }
 
 .thread-composer-branch-menu-hint {
@@ -1279,11 +1320,30 @@ watch(
 }
 
 .thread-composer-branch-input {
-  @apply min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400;
+  @apply min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[11px] outline-none transition;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+}
+
+.thread-composer-branch-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.thread-composer-branch-input:focus {
+  border-color: var(--color-border-strong);
 }
 
 .thread-composer-branch-create-button {
-  @apply shrink-0 rounded-lg border border-zinc-200 bg-zinc-100 px-2 py-1.5 text-[11px] font-medium text-zinc-700 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50;
+  @apply shrink-0 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
+}
+
+.thread-composer-branch-create-button:hover {
+  background: var(--color-bg-muted-hover);
+  color: var(--color-text-primary);
 }
 
 .thread-composer-branch-icon {
@@ -1291,11 +1351,13 @@ watch(
 }
 
 .thread-composer-branch-text {
-  @apply text-[11px] text-zinc-600;
+  @apply min-w-0 truncate text-[11px];
+  color: var(--color-text-secondary);
 }
 
 .thread-composer-branch-chevron {
-  @apply h-3.5 w-3.5 shrink-0 text-zinc-500;
+  @apply h-3.5 w-3.5 shrink-0;
+  color: var(--color-text-muted);
 }
 
 .thread-composer-quota-wrap,
@@ -1304,8 +1366,9 @@ watch(
 }
 
 .thread-composer-context-ring {
-  background: conic-gradient(var(--ring-color, #a1a1aa) var(--context-ring-fill), #e4e4e7 0%);
-  @apply relative inline-flex h-6 w-6 items-center justify-center rounded-full border-0 p-0 text-[9px] text-zinc-700;
+  background: conic-gradient(var(--ring-color, #a1a1aa) var(--context-ring-fill), var(--color-border-default) 0%);
+  @apply relative inline-flex h-6 w-6 items-center justify-center rounded-full border-0 p-0 text-[9px];
+  color: var(--color-text-secondary);
 }
 
 .thread-composer-context-ring[data-level='ok'] {
@@ -1325,11 +1388,16 @@ watch(
 }
 
 .thread-composer-context-ring-inner {
-  @apply inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[8px] font-medium;
+  @apply inline-flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-medium;
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
 }
 
 .thread-composer-status-popover {
-  @apply pointer-events-none invisible absolute bottom-full right-0 z-20 w-54 rounded-xl border border-zinc-200 bg-white p-2 text-[11px] text-zinc-700 opacity-0 shadow-md transition;
+  @apply pointer-events-none invisible absolute bottom-full right-0 z-20 w-54 rounded-xl border p-2 text-[11px] opacity-0 shadow-md transition;
+  border-color: var(--color-border-default);
+  background: var(--color-bg-overlay);
+  color: var(--color-text-secondary);
 }
 
 .thread-composer-status-popover-context {
@@ -1344,7 +1412,8 @@ watch(
 }
 
 .thread-composer-popover-title {
-  @apply m-0 text-xs font-semibold text-zinc-800;
+  @apply m-0 text-xs font-semibold;
+  color: var(--color-text-primary);
 }
 
 .thread-composer-popover-header {
@@ -1382,12 +1451,14 @@ watch(
 }
 
 .thread-composer-popover-gauge-icon {
-  @apply inline-block h-3 w-3 rounded-full border border-zinc-500;
+  @apply inline-block h-3 w-3 rounded-full border;
+  border-color: var(--color-border-strong);
   clip-path: inset(25% 0 0 0);
 }
 
 .thread-composer-popover-line {
-  @apply m-0 mt-1 text-[11px] leading-4 text-zinc-700;
+  @apply m-0 mt-1 text-[11px] leading-4;
+  color: var(--color-text-secondary);
 }
 
 .thread-composer-popover-row {
@@ -1395,27 +1466,54 @@ watch(
 }
 
 .thread-composer-popover-row-duration {
-  @apply font-semibold text-zinc-700;
+  @apply font-semibold;
+  color: var(--color-text-secondary);
 }
 
 .thread-composer-popover-row-percent {
-  @apply text-zinc-500;
+  color: var(--color-text-muted);
 }
 
 .thread-composer-popover-row-reset {
-  @apply text-zinc-500;
+  color: var(--color-text-muted);
 }
 
 .thread-composer-popover-hint {
-  @apply m-0 mt-1.5 text-[11px] leading-4 font-medium text-zinc-800;
+  @apply m-0 mt-1.5 text-[11px] leading-4 font-medium;
+  color: var(--color-text-primary);
 }
 
 .thread-composer-compact-button {
-  @apply mt-2 inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-zinc-900 px-2 py-1.5 text-[11px] font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-500;
+  @apply mt-2 inline-flex w-full items-center justify-center rounded-lg border px-2 py-1.5 text-[11px] font-medium transition disabled:cursor-not-allowed;
+  border-color: var(--color-interactive-strong);
+  background: var(--color-interactive-strong);
+  color: var(--color-text-inverse);
+}
+
+.thread-composer-compact-button:hover {
+  border-color: var(--color-interactive-strong-hover);
+  background: var(--color-interactive-strong-hover);
+}
+
+.thread-composer-compact-button:disabled {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
 }
 
 .thread-composer-submit {
-  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-zinc-900 text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500;
+  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 transition disabled:cursor-not-allowed;
+  background: var(--color-interactive-strong);
+  color: var(--color-text-inverse);
+}
+
+.thread-composer-submit:hover {
+  background: var(--color-interactive-strong-hover);
+}
+
+.thread-composer-submit:disabled {
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
 }
 
 .thread-composer-submit-icon {
@@ -1423,10 +1521,176 @@ watch(
 }
 
 .thread-composer-stop {
-  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-zinc-900 text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-500;
+  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 transition disabled:cursor-not-allowed;
+  background: var(--color-interactive-strong);
+  color: var(--color-text-inverse);
+}
+
+.thread-composer-stop:hover {
+  background: var(--color-interactive-strong-hover);
+}
+
+.thread-composer-stop:disabled {
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
 }
 
 .thread-composer-stop-icon {
   @apply h-5 w-5;
+}
+
+@media (max-width: 720px) {
+  .thread-composer {
+    @apply px-3;
+  }
+
+  .thread-composer-input {
+    font-size: 16px;
+    line-height: 1.5rem;
+  }
+
+  .thread-composer-controls {
+    @apply gap-2;
+  }
+
+  .thread-composer-control {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .thread-composer-control :deep(.composer-dropdown-trigger) {
+    min-width: 0;
+  }
+
+  .thread-composer-status-group {
+    @apply min-w-0 flex-1 justify-end gap-1;
+    width: auto;
+  }
+
+  .thread-composer-branch-wrap {
+    min-width: 0;
+    flex: 0 0 auto;
+    max-width: none;
+  }
+
+  .thread-composer-branch-chip,
+  .thread-composer-branch-button {
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 2.5rem;
+    max-width: 2.5rem;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .thread-composer-branch-text,
+  .thread-composer-branch-chevron {
+    display: none;
+  }
+
+  .thread-composer-quota-wrap,
+  .thread-composer-context-wrap {
+    flex: 0 0 auto;
+  }
+
+  .thread-composer-branch-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    display: block;
+    background: color-mix(in srgb, var(--color-bg-overlay) 54%, transparent);
+    backdrop-filter: blur(6px);
+  }
+
+  .thread-composer-branch-menu.thread-composer-branch-sheet {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+    width: auto;
+    max-width: 32.5rem;
+    max-height: min(70vh, 32rem);
+    margin: 0 auto;
+    padding: 0.75rem;
+    border-radius: 1.25rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    box-shadow: 0 24px 80px color-mix(in srgb, black 20%, transparent);
+  }
+
+  .thread-composer-branch-menu-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    margin: -0.75rem -0.75rem 0;
+    padding: 0.5rem 0.75rem 0.25rem;
+    background: color-mix(in srgb, var(--color-bg-surface) 96%, transparent);
+  }
+
+  .thread-composer-branch-sheet-handle {
+    display: block;
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: 2.25rem;
+    height: 0.25rem;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: var(--color-border-default);
+  }
+
+  .thread-composer-branch-menu-title {
+    @apply text-sm;
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .thread-composer-branch-sheet-close {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-zinc-500 transition hover:bg-zinc-100;
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .thread-composer-branch-menu-hint,
+  .thread-composer-branch-menu-session-hint,
+  .thread-composer-branch-menu-empty,
+  .thread-composer-branch-dirty-preview-title,
+  .thread-composer-branch-dirty-preview-item,
+  .thread-composer-branch-dirty-preview-more,
+  .thread-composer-branch-persisted-method,
+  .thread-composer-branch-persisted-meta {
+    @apply text-[11px];
+  }
+
+  .thread-composer-branch-list {
+    max-height: min(32vh, 14rem);
+  }
+
+  .thread-composer-branch-persisted-list {
+    max-height: 7.5rem;
+    overflow-y: auto;
+  }
+
+  .thread-composer-branch-create {
+    @apply sticky bottom-0 mt-3 flex-col items-stretch gap-2 rounded-xl border border-zinc-200 bg-white/95 p-2;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    backdrop-filter: blur(10px);
+  }
+
+  .thread-composer-branch-create-button {
+    @apply w-full justify-center;
+  }
+
+  .thread-composer-submit,
+  .thread-composer-stop {
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 2.5rem;
+    flex: 0 0 2.5rem;
+  }
 }
 </style>

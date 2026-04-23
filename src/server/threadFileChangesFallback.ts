@@ -1,0 +1,209 @@
+import { readFile } from 'node:fs/promises'
+
+import type { UiChangedFile, UiTurnFileChanges } from '../types/codex.ts'
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function readText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function toTurnId(record: Record<string, unknown>, candidate: Record<string, unknown> | null): string {
+  return (
+    readText(record.turnId) ||
+    readText(record.turn_id) ||
+    readText(candidate?.turnId) ||
+    readText(candidate?.turn_id)
+  )
+}
+
+function readRecordTurnId(record: Record<string, unknown>): string {
+  return (
+    readText(record.turnId) ||
+    readText(record.turn_id) ||
+    readText(asRecord(record.payload)?.turnId) ||
+    readText(asRecord(record.payload)?.turn_id) ||
+    readText(asRecord(record.item)?.turnId) ||
+    readText(asRecord(record.item)?.turn_id)
+  )
+}
+
+function readToolCall(record: Record<string, unknown>): { turnId: string; name: string; input: string } | null {
+  const nestedCandidates = [
+    asRecord(record.item),
+    asRecord(record.payload),
+    record,
+  ]
+
+  for (const candidate of nestedCandidates) {
+    if (!candidate) continue
+    if (readText(candidate.type) !== 'custom_tool_call') continue
+
+    const name = readText(candidate.name)
+    const input = readText(candidate.arguments) || readText(candidate.input)
+    if (!name || !input) continue
+
+    return {
+      turnId: toTurnId(record, candidate),
+      name,
+      input,
+    }
+  }
+
+  return null
+}
+
+function ensureFile(
+  filesByPath: Map<string, UiChangedFile>,
+  order: string[],
+  path: string,
+): UiChangedFile {
+  const normalizedPath = path.trim()
+  const existing = filesByPath.get(normalizedPath)
+  if (existing) return existing
+
+  const created: UiChangedFile = {
+    path: normalizedPath,
+    additions: 0,
+    deletions: 0,
+    diff: '',
+  }
+  filesByPath.set(normalizedPath, created)
+  order.push(normalizedPath)
+  return created
+}
+
+function moveTrackedFile(
+  filesByPath: Map<string, UiChangedFile>,
+  order: string[],
+  currentPath: string,
+  nextPath: string,
+): string {
+  const normalizedCurrentPath = currentPath.trim()
+  const normalizedNextPath = nextPath.trim()
+  if (!normalizedCurrentPath || !normalizedNextPath || normalizedCurrentPath === normalizedNextPath) {
+    return normalizedCurrentPath
+  }
+
+  const existing = filesByPath.get(normalizedCurrentPath)
+  if (!existing) {
+    ensureFile(filesByPath, order, normalizedNextPath)
+    return normalizedNextPath
+  }
+
+  const destination = ensureFile(filesByPath, order, normalizedNextPath)
+  destination.additions += existing.additions
+  destination.deletions += existing.deletions
+  filesByPath.delete(normalizedCurrentPath)
+
+  const orderIndex = order.indexOf(normalizedCurrentPath)
+  if (orderIndex >= 0) {
+    order.splice(orderIndex, 1)
+  }
+
+  return normalizedNextPath
+}
+
+function parseApplyPatchSummary(input: string): UiChangedFile[] {
+  const filesByPath = new Map<string, UiChangedFile>()
+  const order: string[] = []
+  let currentPath = ''
+
+  const lines = input.split('\n')
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd()
+
+    if (line.startsWith('*** Add File: ')) {
+      currentPath = line.slice('*** Add File: '.length).trim()
+      if (currentPath) ensureFile(filesByPath, order, currentPath)
+      continue
+    }
+
+    if (line.startsWith('*** Update File: ')) {
+      currentPath = line.slice('*** Update File: '.length).trim()
+      if (currentPath) ensureFile(filesByPath, order, currentPath)
+      continue
+    }
+
+    if (line.startsWith('*** Delete File: ')) {
+      currentPath = line.slice('*** Delete File: '.length).trim()
+      if (currentPath) ensureFile(filesByPath, order, currentPath)
+      continue
+    }
+
+    if (line.startsWith('*** Move to: ')) {
+      currentPath = moveTrackedFile(filesByPath, order, currentPath, line.slice('*** Move to: '.length))
+      continue
+    }
+
+    if (!currentPath || line.startsWith('*** ') || line.startsWith('@@')) continue
+
+    const file = filesByPath.get(currentPath)
+    if (!file) continue
+
+    if (line.startsWith('+')) {
+      file.additions += 1
+      continue
+    }
+
+    if (line.startsWith('-')) {
+      file.deletions += 1
+    }
+  }
+
+  return order
+    .map((path) => filesByPath.get(path))
+    .filter((value): value is UiChangedFile => Boolean(value))
+}
+
+export async function readThreadFileChangesFallbackFromSessionPath(sessionPath: string): Promise<UiTurnFileChanges | null> {
+  const normalizedPath = sessionPath.trim()
+  if (!normalizedPath) return null
+  const sessionJsonl = await readFile(normalizedPath, 'utf8')
+  return readThreadFileChangesFallbackFromSessionJsonl(sessionJsonl)
+}
+
+export async function readThreadFileChangesFallbackFromSessionJsonl(
+  sessionJsonl: string,
+): Promise<UiTurnFileChanges | null> {
+  const lines = sessionJsonl.split('\n')
+  let latestSummary: UiTurnFileChanges | null = null
+  let lastSeenTurnId = ''
+
+  for (const line of lines) {
+    const raw = line.trim()
+    if (!raw) continue
+
+    let record: Record<string, unknown> | null = null
+    try {
+      record = asRecord(JSON.parse(raw))
+    } catch {
+      continue
+    }
+    if (!record) continue
+
+    const recordTurnId = readRecordTurnId(record)
+    if (recordTurnId) {
+      lastSeenTurnId = recordTurnId
+    }
+
+    const toolCall = readToolCall(record)
+    if (!toolCall || toolCall.name !== 'apply_patch') continue
+
+    const files = parseApplyPatchSummary(toolCall.input)
+    if (files.length === 0) continue
+
+    latestSummary = {
+      turnId: toolCall.turnId || lastSeenTurnId,
+      files,
+      totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
+      totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0),
+    }
+  }
+
+  return latestSummary
+}
