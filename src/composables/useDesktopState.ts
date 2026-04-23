@@ -702,20 +702,6 @@ export function useDesktopState() {
     return matches.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   }
 
-  function listLiveServerRequestsForWorkspace(cwd: string): UiServerRequest[] {
-    const normalizedCwd = cwd.trim()
-    if (!normalizedCwd) return []
-    const matches: UiServerRequest[] = []
-    for (const [threadId, requests] of Object.entries(pendingServerRequestsByThreadId.value)) {
-      if (threadId === GLOBAL_SERVER_REQUEST_SCOPE || requests.length === 0) continue
-      const mappedCwd = getThreadCwdById(threadId)
-      if (mappedCwd === normalizedCwd) {
-        matches.push(...requests)
-      }
-    }
-    return matches.sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
-  }
-
   function computeWorkspaceBranchBlockedReasons(
     cwd: string,
     state: Pick<UiWorkspaceBranchState, 'isRepo' | 'isDirty'>,
