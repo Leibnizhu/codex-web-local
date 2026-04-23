@@ -1,8 +1,8 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { tmpdir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 type JsonRpcCall = {
   jsonrpc: '2.0'
@@ -42,6 +42,25 @@ type PendingServerRequest = {
   receivedAtIso: string
 }
 
+type PersistedServerRequest = {
+  id: number
+  method: string
+  threadId: string
+  turnId: string
+  itemId: string
+  cwd: string
+  params: unknown
+  receivedAtIso: string
+  resolvedAtIso: string | null
+  resolutionKind: string | null
+  dismissedAtIso: string | null
+  dismissedReason: string | null
+  dismissedBy: 'user' | null
+}
+
+const PERSISTED_SERVER_REQUEST_UNRESOLVED_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const PERSISTED_SERVER_REQUEST_RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -80,6 +99,20 @@ function normalizePreviewPath(rawPath: string): string {
   return resolve(process.cwd(), trimmed)
 }
 
+function getPersistedServerRequestsLedgerPath(): string {
+  const codexHome = process.env.CODEX_HOME?.trim()
+  const baseDir = codexHome && codexHome.length > 0
+    ? codexHome
+    : join(homedir(), '.codex')
+  return join(baseDir, 'codex-web-local', 'persisted-server-requests.json')
+}
+
+function parseTimestampMs(value: string | null): number | null {
+  if (!value) return null
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? null : timestamp
+}
+
 function runGit(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -100,6 +133,88 @@ type WorkspaceFileChange = {
   diff: string
 }
 
+type WorkspaceDiffMode =
+  | 'unstaged'
+  | 'staged'
+  | 'branch'
+  | 'lastCommit'
+  | 'gitStatus'
+
+type WorkspaceDiffSnapshot = {
+  mode: WorkspaceDiffMode
+  cwd: string
+  label: string
+  baseRef: string | null
+  targetRef: string | null
+  warning: string | null
+  files: WorkspaceFileChange[]
+  totalAdditions: number
+  totalDeletions: number
+}
+
+type ServerSideWorkspaceGuardBlockedReason =
+  | 'not_repo'
+  | 'workspace_dirty'
+  | 'pending_server_requests'
+  | 'persisted_server_requests'
+  | 'unresolved_server_request_scope'
+
+type ServerSideWorkspaceGuard = {
+  cwd: string
+  isRepo: boolean
+  blockedReasons: ServerSideWorkspaceGuardBlockedReason[]
+}
+
+type ResolvedRequestWorkspace = {
+  cwd: string
+  unresolvedScope: boolean
+}
+
+type WorkspaceDirtyKind =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted'
+  | 'unknown'
+
+type WorkspaceDirtyEntry = {
+  path: string
+  x: string
+  y: string
+  kind: WorkspaceDirtyKind
+  staged: boolean
+  unstaged: boolean
+}
+
+type WorkspaceDirtySummary = {
+  trackedModified: number
+  staged: number
+  untracked: number
+  conflicted: number
+  renamed: number
+  deleted: number
+}
+
+type WorkspaceGitStatus = {
+  cwd: string
+  isRepo: boolean
+  isDirty: boolean
+  currentBranch: string
+  dirtySummary: WorkspaceDirtySummary
+  dirtyEntries: WorkspaceDirtyEntry[]
+}
+
+const EMPTY_WORKSPACE_DIRTY_SUMMARY: WorkspaceDirtySummary = {
+  trackedModified: 0,
+  staged: 0,
+  untracked: 0,
+  conflicted: 0,
+  renamed: 0,
+  deleted: 0,
+}
+
 function parseNumstat(output: string): Array<{ path: string; additions: number; deletions: number }> {
   const rows: Array<{ path: string; additions: number; deletions: number }> = []
   const lines = output.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
@@ -115,6 +230,101 @@ function parseNumstat(output: string): Array<{ path: string; additions: number; 
     })
   }
   return rows
+}
+
+function normalizeWorkspaceDiffMode(value: string): WorkspaceDiffMode | null {
+  const normalized = value.trim()
+  if (
+    normalized === 'unstaged' ||
+    normalized === 'staged' ||
+    normalized === 'branch' ||
+    normalized === 'lastCommit' ||
+    normalized === 'gitStatus'
+  ) {
+    return normalized
+  }
+  return null
+}
+
+function isConflictStatus(x: string, y: string): boolean {
+  if (x === 'U' || y === 'U') return true
+  const pair = `${x}${y}`
+  return pair === 'DD' || pair === 'AA'
+}
+
+function classifyWorkspaceDirtyKind(x: string, y: string, path: string): WorkspaceDirtyKind {
+  if (!path) return 'unknown'
+  if (x === '?' && y === '?') return 'untracked'
+  if (isConflictStatus(x, y)) return 'conflicted'
+  if (x === 'R' || y === 'R' || x === 'C' || y === 'C') return 'renamed'
+  if (x === 'D' || y === 'D') return 'deleted'
+  if (x === 'A' || y === 'A') return 'added'
+  if (
+    x === 'M' || y === 'M' ||
+    x === 'T' || y === 'T'
+  ) {
+    return 'modified'
+  }
+  return 'unknown'
+}
+
+function normalizeStatusPathSegment(rawPath: string): string {
+  const trimmed = rawPath.trim()
+  if (!trimmed) return ''
+  const renameSeparator = ' -> '
+  if (trimmed.includes(renameSeparator)) {
+    const [, nextPath = ''] = trimmed.split(renameSeparator)
+    return nextPath.trim()
+  }
+  return trimmed
+}
+
+function parseWorkspaceDirtyEntries(output: string): WorkspaceDirtyEntry[] {
+  const lines = output.split('\n').filter((line) => line.trim().length > 0)
+  const entries: WorkspaceDirtyEntry[] = []
+  for (const line of lines) {
+    if (line.length < 3) continue
+    const x = line[0] ?? ' '
+    const y = line[1] ?? ' '
+    const path = normalizeStatusPathSegment(line.slice(3))
+    if (!path) continue
+    entries.push({
+      path,
+      x,
+      y,
+      kind: classifyWorkspaceDirtyKind(x, y, path),
+      staged: x !== ' ' && x !== '?',
+      unstaged: y !== ' ' && y !== '?',
+    })
+  }
+  return entries.sort((first, second) => first.path.localeCompare(second.path))
+}
+
+function summarizeWorkspaceDirtyEntries(entries: WorkspaceDirtyEntry[]): WorkspaceDirtySummary {
+  const summary: WorkspaceDirtySummary = { ...EMPTY_WORKSPACE_DIRTY_SUMMARY }
+  for (const entry of entries) {
+    if (entry.staged) {
+      summary.staged += 1
+    }
+    if (entry.kind === 'untracked') {
+      summary.untracked += 1
+      continue
+    }
+    if (entry.kind === 'conflicted') {
+      summary.conflicted += 1
+      continue
+    }
+    if (entry.kind === 'renamed') {
+      summary.renamed += 1
+      continue
+    }
+    if (entry.kind === 'deleted') {
+      summary.deleted += 1
+      continue
+    }
+    summary.trackedModified += 1
+  }
+  return summary
 }
 
 async function collectWorkspaceChanges(cwd: string): Promise<WorkspaceFileChange[]> {
@@ -153,6 +363,320 @@ async function collectWorkspaceChanges(cwd: string): Promise<WorkspaceFileChange
   return Array.from(merged.values()).sort((first, second) => first.path.localeCompare(second.path))
 }
 
+async function collectWorkspaceChangesForDiffArgs(
+  cwd: string,
+  numstatArgs: string[],
+  diffArgsForPath: (path: string) => string[],
+): Promise<WorkspaceFileChange[]> {
+  const targetCwd = resolve(cwd)
+  await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
+
+  const numstatOutput = await runGit(numstatArgs, targetCwd)
+  const rows = parseNumstat(numstatOutput)
+  const files: WorkspaceFileChange[] = new Array(rows.length)
+
+  // Limit the number of concurrent git diff processes to avoid overwhelming the system
+  const maxConcurrentDiffs = 4
+  let currentIndex = 0
+
+  async function worker(): Promise<void> {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const index = currentIndex++
+      if (index >= rows.length) {
+        break
+      }
+      const row = rows[index]
+      const diff = await runGit(diffArgsForPath(row.path), targetCwd).catch(() => '')
+      files[index] = {
+        path: row.path,
+        additions: row.additions,
+        deletions: row.deletions,
+        diff: diff.trimEnd(),
+      }
+    }
+  }
+
+  const workerCount = Math.min(maxConcurrentDiffs, rows.length)
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return files.sort((first, second) => first.path.localeCompare(second.path))
+}
+
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await runGit(['rev-parse', '--verify', `${ref}^{commit}`], cwd)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function resolveUpstreamRemote(cwd: string): Promise<string | null> {
+  try {
+    const upstream = (await runGit(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], cwd)).trim()
+    if (!upstream) return null
+    const [remote] = upstream.split('/')
+    return remote?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+async function resolveRemoteHeadBranch(
+  cwd: string,
+  remote: string,
+): Promise<{ remote: string; ref: string; shortName: string } | null> {
+  const normalizedRemote = remote.trim()
+  if (!normalizedRemote) return null
+  try {
+    const symbolicRef = (
+      await runGit(['symbolic-ref', '--quiet', '--short', `refs/remotes/${normalizedRemote}/HEAD`], cwd)
+    ).trim()
+    if (!symbolicRef || symbolicRef === `${normalizedRemote}/HEAD`) return null
+    const shortName = symbolicRef.startsWith(`${normalizedRemote}/`)
+      ? symbolicRef.slice(normalizedRemote.length + 1)
+      : symbolicRef
+    return {
+      remote: normalizedRemote,
+      ref: symbolicRef,
+      shortName,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function listRemoteHeadBranches(
+  cwd: string,
+): Promise<Array<{ remote: string; ref: string; shortName: string }>> {
+  try {
+    const output = await runGit(['for-each-ref', 'refs/remotes', '--format=%(refname:short)'], cwd)
+    const remotes = new Set<string>()
+    for (const line of output.split('\n')) {
+      const normalized = line.trim()
+      if (!normalized.endsWith('/HEAD')) continue
+      const remote = normalized.slice(0, -'/HEAD'.length).trim()
+      if (remote) remotes.add(remote)
+    }
+
+    const resolved = await Promise.all(
+      Array.from(remotes)
+        .sort((first, second) => first.localeCompare(second))
+        .map((remote) => resolveRemoteHeadBranch(cwd, remote)),
+    )
+
+    const deduped = new Map<string, { remote: string; ref: string; shortName: string }>()
+    for (const candidate of resolved) {
+      if (!candidate) continue
+      if (!deduped.has(candidate.ref)) {
+        deduped.set(candidate.ref, candidate)
+      }
+    }
+    return Array.from(deduped.values())
+  } catch {
+    return []
+  }
+}
+
+function withConfiguredBaseBranchWarning(
+  configuredBaseBranch: string,
+  resolvedBaseBranch: string,
+  note: string | null = null,
+): string {
+  const prefix = `Configured base branch ${configuredBaseBranch} not found`
+  if (note) return `${prefix}; ${note}`
+  return `${prefix}; using ${resolvedBaseBranch}`
+}
+
+async function resolveWorkspaceDiffBaseBranch(
+  cwd: string,
+  preferredBaseBranch: string | null,
+): Promise<{ baseBranch: string | null; warning: string | null }> {
+  const targetCwd = resolve(cwd)
+  const normalizedPreferred = preferredBaseBranch?.trim() ?? ''
+  if (normalizedPreferred) {
+    if (await refExists(targetCwd, normalizedPreferred)) {
+      return { baseBranch: normalizedPreferred, warning: null }
+    }
+  }
+
+  const upstreamRemote = await resolveUpstreamRemote(targetCwd)
+  if (upstreamRemote) {
+    const upstreamRemoteHead = await resolveRemoteHeadBranch(targetCwd, upstreamRemote)
+    if (upstreamRemoteHead) {
+      return {
+        baseBranch: upstreamRemoteHead.ref,
+        warning: normalizedPreferred
+          ? withConfiguredBaseBranchWarning(normalizedPreferred, upstreamRemoteHead.ref)
+          : null,
+      }
+    }
+  }
+
+  const originRemoteHead = await resolveRemoteHeadBranch(targetCwd, 'origin')
+  if (originRemoteHead) {
+    return {
+      baseBranch: originRemoteHead.ref,
+      warning: normalizedPreferred
+        ? withConfiguredBaseBranchWarning(normalizedPreferred, originRemoteHead.ref)
+        : null,
+    }
+  }
+
+  const remoteHeads = await listRemoteHeadBranches(targetCwd)
+  if (remoteHeads.length > 0) {
+    const chosenRemoteHead = remoteHeads[0]
+    const fallbackWarning = remoteHeads.length > 1
+      ? `Multiple local remote HEADs found; using ${chosenRemoteHead.ref}`
+      : `Using local remote HEAD ${chosenRemoteHead.ref}`
+    return {
+      baseBranch: chosenRemoteHead.ref,
+      warning: normalizedPreferred
+        ? withConfiguredBaseBranchWarning(normalizedPreferred, chosenRemoteHead.ref, fallbackWarning)
+        : fallbackWarning,
+    }
+  }
+
+  for (const candidate of ['main', 'master', 'develop', 'dev', 'trunk']) {
+    if (await refExists(targetCwd, candidate)) {
+      return {
+        baseBranch: candidate,
+        warning: normalizedPreferred
+          ? withConfiguredBaseBranchWarning(normalizedPreferred, candidate, `using local branch ${candidate}`)
+          : `Remote HEAD not found; using local branch ${candidate}`,
+      }
+    }
+  }
+
+  return {
+    baseBranch: null,
+    warning: normalizedPreferred
+      ? `Configured base branch ${normalizedPreferred} not found; unable to infer a base branch from local Git metadata`
+      : 'Unable to infer a base branch from local Git metadata',
+  }
+}
+
+function summarizeWorkspaceFileChanges(files: WorkspaceFileChange[]): Pick<WorkspaceDiffSnapshot, 'totalAdditions' | 'totalDeletions'> {
+  return {
+    totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
+    totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0),
+  }
+}
+
+async function collectWorkspaceDiffSnapshot(
+  cwd: string,
+  mode: WorkspaceDiffMode,
+  options: { baseBranch?: string | null } = {},
+): Promise<WorkspaceDiffSnapshot> {
+  const targetCwd = resolve(cwd)
+  await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
+
+  if (mode === 'unstaged') {
+    const files = await collectWorkspaceChangesForDiffArgs(
+      targetCwd,
+      ['diff', '--numstat'],
+      (path) => ['diff', '--', path],
+    )
+    const totals = summarizeWorkspaceFileChanges(files)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Unstaged changes',
+      baseRef: null,
+      targetRef: 'WORKTREE',
+      warning: null,
+      files,
+      ...totals,
+    }
+  }
+
+  if (mode === 'staged') {
+    const files = await collectWorkspaceChangesForDiffArgs(
+      targetCwd,
+      ['diff', '--cached', '--numstat'],
+      (path) => ['diff', '--cached', '--', path],
+    )
+    const totals = summarizeWorkspaceFileChanges(files)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Staged changes',
+      baseRef: 'HEAD',
+      targetRef: 'INDEX',
+      warning: null,
+      files,
+      ...totals,
+    }
+  }
+
+  if (mode === 'lastCommit') {
+    const files = await collectWorkspaceChangesForDiffArgs(
+      targetCwd,
+      ['show', '--format=', '--numstat', 'HEAD'],
+      (path) => ['show', '--format=', 'HEAD', '--', path],
+    )
+    const totals = summarizeWorkspaceFileChanges(files)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Last commit',
+      baseRef: 'HEAD~1',
+      targetRef: 'HEAD',
+      warning: null,
+      files,
+      ...totals,
+    }
+  }
+
+  if (mode === 'gitStatus') {
+    const status = await readWorkspaceGitStatus(targetCwd)
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Git status',
+      baseRef: null,
+      targetRef: status.currentBranch || 'WORKTREE',
+      warning: null,
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+    }
+  }
+
+  const { baseBranch, warning } = await resolveWorkspaceDiffBaseBranch(targetCwd, options.baseBranch ?? null)
+  if (!baseBranch) {
+    return {
+      mode,
+      cwd: targetCwd,
+      label: 'Branch changes',
+      baseRef: null,
+      targetRef: 'HEAD',
+      warning,
+      files: [],
+      totalAdditions: 0,
+      totalDeletions: 0,
+    }
+  }
+
+  const mergeBase = (await runGit(['merge-base', baseBranch, 'HEAD'], targetCwd)).trim()
+  const files = await collectWorkspaceChangesForDiffArgs(
+    targetCwd,
+    ['diff', '--numstat', mergeBase, 'HEAD'],
+    (path) => ['diff', mergeBase, 'HEAD', '--', path],
+  )
+  const totals = summarizeWorkspaceFileChanges(files)
+  return {
+    mode,
+    cwd: targetCwd,
+    label: `Branch changes vs ${baseBranch}`,
+    baseRef: baseBranch,
+    targetRef: 'HEAD',
+    warning,
+    files,
+    ...totals,
+  }
+}
+
 async function collectWorkspaceUnifiedDiff(cwd: string): Promise<string> {
   const targetCwd = resolve(cwd)
   await runGit(['rev-parse', '--is-inside-work-tree'], targetCwd)
@@ -161,6 +685,112 @@ async function collectWorkspaceUnifiedDiff(cwd: string): Promise<string> {
     runGit(['diff'], targetCwd).catch(() => ''),
   ])
   return [stagedDiff.trimEnd(), unstagedDiff.trimEnd()].filter((part) => part.length > 0).join('\n')
+}
+
+async function isGitWorkspace(cwd: string): Promise<boolean> {
+  try {
+    const output = await runGit(['rev-parse', '--is-inside-work-tree'], resolve(cwd))
+    return output.trim() === 'true'
+  } catch {
+    return false
+  }
+}
+
+async function readWorkspaceGitStatus(cwd: string): Promise<WorkspaceGitStatus> {
+  const targetCwd = resolve(cwd)
+  const isRepo = await isGitWorkspace(targetCwd)
+  if (!isRepo) {
+    return {
+      cwd: targetCwd,
+      isRepo: false,
+      isDirty: false,
+      currentBranch: '',
+      dirtySummary: { ...EMPTY_WORKSPACE_DIRTY_SUMMARY },
+      dirtyEntries: [],
+    }
+  }
+
+  const [statusOutput, branchOutput] = await Promise.all([
+    runGit(['status', '--porcelain=v1', '-uall'], targetCwd),
+    runGit(['branch', '--show-current'], targetCwd).catch(() => ''),
+  ])
+  const dirtyEntries = parseWorkspaceDirtyEntries(statusOutput)
+
+  return {
+    cwd: targetCwd,
+    isRepo: true,
+    isDirty: dirtyEntries.length > 0,
+    currentBranch: branchOutput.trim(),
+    dirtySummary: summarizeWorkspaceDirtyEntries(dirtyEntries),
+    dirtyEntries,
+  }
+}
+
+async function readWorkspaceBranches(cwd: string): Promise<{
+  cwd: string
+  isRepo: boolean
+  currentBranch: string
+  branches: string[]
+}> {
+  const targetCwd = resolve(cwd)
+  const status = await readWorkspaceGitStatus(targetCwd)
+  if (!status.isRepo) {
+    return {
+      cwd: targetCwd,
+      isRepo: false,
+      currentBranch: '',
+      branches: [],
+    }
+  }
+
+  const output = await runGit(['branch', '--list', '--format=%(refname:short)'], targetCwd)
+  const branches = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .sort((first, second) => first.localeCompare(second))
+
+  return {
+    cwd: targetCwd,
+    isRepo: true,
+    currentBranch: status.currentBranch,
+    branches,
+  }
+}
+
+async function assertGitWorkspace(cwd: string): Promise<string> {
+  const targetCwd = resolve(cwd)
+  if (!(await isGitWorkspace(targetCwd))) {
+    throw new Error('Target cwd is not a git repository')
+  }
+  return targetCwd
+}
+
+async function assertValidBranchName(branch: string): Promise<string> {
+  const normalizedBranch = branch.trim()
+  if (!normalizedBranch) {
+    throw new Error('Branch name is required')
+  }
+
+  try {
+    await runGit(['check-ref-format', '--branch', normalizedBranch], process.cwd())
+  } catch {
+    throw new Error('Invalid branch name')
+  }
+
+  return normalizedBranch
+}
+
+async function switchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const targetCwd = await assertGitWorkspace(cwd)
+  const normalizedBranch = await assertValidBranchName(branch)
+  await runGit(['switch', normalizedBranch], targetCwd)
+}
+
+async function createAndSwitchWorkspaceBranch(cwd: string, branch: string): Promise<void> {
+  const targetCwd = await assertGitWorkspace(cwd)
+  const normalizedBranch = await assertValidBranchName(branch)
+  await runGit(['switch', '-c', normalizedBranch], targetCwd)
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -187,6 +817,10 @@ class AppServerProcess {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly notificationListeners = new Set<(value: { method: string; params: unknown }) => void>()
   private readonly pendingServerRequests = new Map<number, PendingServerRequest>()
+  private readonly persistedServerRequests = new Map<number, PersistedServerRequest>()
+  private readonly threadCwdById = new Map<string, string>()
+  private persistedServerRequestsLoaded: Promise<void> | null = null
+  private persistedServerRequestsFlushChain: Promise<void> = Promise.resolve()
 
   private start(): void {
     if (this.process) return
@@ -298,6 +932,213 @@ class AppServerProcess {
     })
   }
 
+  private async ensurePersistedServerRequestsLoaded(): Promise<void> {
+    if (this.persistedServerRequestsLoaded) {
+      await this.persistedServerRequestsLoaded
+      return
+    }
+
+    this.persistedServerRequestsLoaded = (async () => {
+      try {
+        const raw = await readFile(getPersistedServerRequestsLedgerPath(), 'utf8')
+        const payload = JSON.parse(raw) as { requests?: unknown[] } | null
+        const rows = Array.isArray(payload?.requests) ? payload.requests : []
+        this.persistedServerRequests.clear()
+        for (const row of rows) {
+          const record = asRecord(row)
+          const id = record?.id
+          const method = typeof record?.method === 'string' ? record.method : ''
+          const receivedAtIso = typeof record?.receivedAtIso === 'string' ? record.receivedAtIso : ''
+          if (typeof id !== 'number' || !Number.isInteger(id) || !method || !receivedAtIso) continue
+          this.persistedServerRequests.set(id, {
+            id,
+            method,
+            threadId: typeof record?.threadId === 'string' ? record.threadId : '',
+            turnId: typeof record?.turnId === 'string' ? record.turnId : '',
+            itemId: typeof record?.itemId === 'string' ? record.itemId : '',
+            cwd: typeof record?.cwd === 'string' ? record.cwd : '',
+            params: record?.params ?? null,
+            receivedAtIso,
+            resolvedAtIso: typeof record?.resolvedAtIso === 'string' ? record.resolvedAtIso : null,
+            resolutionKind: typeof record?.resolutionKind === 'string' ? record.resolutionKind : null,
+            dismissedAtIso: typeof record?.dismissedAtIso === 'string' ? record.dismissedAtIso : null,
+            dismissedReason: typeof record?.dismissedReason === 'string' ? record.dismissedReason : null,
+            dismissedBy: record?.dismissedBy === 'user' ? 'user' : null,
+          })
+        }
+        if (this.prunePersistedServerRequests()) {
+          this.queuePersistedServerRequestsFlush()
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : ''
+        if (!message.includes('enoent')) {
+          console.warn('[codex-web-local] Failed to load persisted server requests:', error)
+        }
+      }
+    })()
+
+    await this.persistedServerRequestsLoaded
+  }
+
+  private prunePersistedServerRequests(nowMs = Date.now()): boolean {
+    let changed = false
+    for (const [requestId, request] of this.persistedServerRequests.entries()) {
+      const resolvedAtMs = parseTimestampMs(request.resolvedAtIso)
+      if (resolvedAtMs !== null) {
+        if (nowMs - resolvedAtMs > PERSISTED_SERVER_REQUEST_RESOLVED_RETENTION_MS) {
+          this.persistedServerRequests.delete(requestId)
+          changed = true
+        }
+        continue
+      }
+      const receivedAtMs = parseTimestampMs(request.receivedAtIso)
+      if (receivedAtMs !== null && nowMs - receivedAtMs > PERSISTED_SERVER_REQUEST_UNRESOLVED_TTL_MS) {
+        this.persistedServerRequests.delete(requestId)
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  private queuePersistedServerRequestsFlush(): void {
+    this.persistedServerRequestsFlushChain = this.persistedServerRequestsFlushChain
+      .catch(() => {})
+      .then(async () => {
+        this.prunePersistedServerRequests()
+        const ledgerPath = getPersistedServerRequestsLedgerPath()
+        await mkdir(dirname(ledgerPath), { recursive: true })
+        const payload = {
+          version: 1,
+          requests: Array.from(this.persistedServerRequests.values()).sort((first, second) =>
+            first.receivedAtIso.localeCompare(second.receivedAtIso),
+          ),
+        }
+        await writeFile(ledgerPath, JSON.stringify(payload, null, 2), 'utf8')
+      })
+      .catch((error) => {
+        console.warn('[codex-web-local] Failed to persist server requests:', error)
+      })
+  }
+
+  private async upsertPersistedServerRequest(record: PersistedServerRequest): Promise<void> {
+    await this.ensurePersistedServerRequestsLoaded()
+    const current = this.persistedServerRequests.get(record.id)
+    this.persistedServerRequests.set(record.id, current
+      ? {
+          ...record,
+          resolvedAtIso: current.resolvedAtIso,
+          resolutionKind: current.resolutionKind,
+          dismissedAtIso: current.dismissedAtIso,
+          dismissedReason: current.dismissedReason,
+          dismissedBy: current.dismissedBy,
+        }
+      : record)
+    this.queuePersistedServerRequestsFlush()
+  }
+
+  private async markPersistedServerRequestResolved(requestId: number, resolutionKind: string): Promise<void> {
+    await this.ensurePersistedServerRequestsLoaded()
+    const current = this.persistedServerRequests.get(requestId)
+    if (!current) return
+    this.persistedServerRequests.set(requestId, {
+      ...current,
+      resolvedAtIso: new Date().toISOString(),
+      resolutionKind,
+    })
+    this.queuePersistedServerRequestsFlush()
+  }
+
+  private async resolveThreadCwd(threadId: string): Promise<string | null> {
+    const normalizedThreadId = threadId.trim()
+    if (!normalizedThreadId) return null
+
+    const cached = this.threadCwdById.get(normalizedThreadId)
+    if (cached) return cached
+
+    try {
+      const payload = asRecord(await this.rpc('thread/read', {
+        threadId: normalizedThreadId,
+        includeTurns: false,
+      }))
+      const thread = asRecord(payload?.thread)
+      const cwd = typeof thread?.cwd === 'string' ? thread.cwd.trim() : ''
+      if (!cwd) return null
+      const normalizedCwd = resolve(cwd)
+      this.threadCwdById.set(normalizedThreadId, normalizedCwd)
+      return normalizedCwd
+    } catch {
+      return null
+    }
+  }
+
+  private async resolveRequestWorkspace(params: unknown, fallbackThreadId = ''): Promise<ResolvedRequestWorkspace> {
+    const requestParams = asRecord(params)
+    const requestCwd = typeof requestParams?.cwd === 'string' ? requestParams.cwd.trim() : ''
+    if (requestCwd) {
+      return {
+        cwd: resolve(requestCwd),
+        unresolvedScope: false,
+      }
+    }
+
+    const threadId =
+      typeof requestParams?.threadId === 'string' && requestParams.threadId.trim().length > 0
+        ? requestParams.threadId
+        : fallbackThreadId
+    if (!threadId.trim()) {
+      return {
+        cwd: '',
+        unresolvedScope: false,
+      }
+    }
+
+    const resolvedCwd = await this.resolveThreadCwd(threadId)
+    return {
+      cwd: resolvedCwd ?? '',
+      unresolvedScope: resolvedCwd === null,
+    }
+  }
+
+  private async toPersistedServerRequest(pendingRequest: PendingServerRequest): Promise<PersistedServerRequest> {
+    const requestParams = asRecord(pendingRequest.params)
+    return {
+      id: pendingRequest.id,
+      method: pendingRequest.method,
+      threadId: typeof requestParams?.threadId === 'string' ? requestParams.threadId : '',
+      turnId: typeof requestParams?.turnId === 'string' ? requestParams.turnId : '',
+      itemId: typeof requestParams?.itemId === 'string' ? requestParams.itemId : '',
+      cwd: (await this.resolveRequestWorkspace(pendingRequest.params)).cwd,
+      params: pendingRequest.params,
+      receivedAtIso: pendingRequest.receivedAtIso,
+      resolvedAtIso: null,
+      resolutionKind: null,
+      dismissedAtIso: null,
+      dismissedReason: null,
+      dismissedBy: null,
+    }
+  }
+
+  async dismissPersistedServerRequests(requestIds: number[]): Promise<number[]> {
+    await this.ensurePersistedServerRequestsLoaded()
+    const dismissedRequestIds: number[] = []
+    for (const requestId of requestIds) {
+      const current = this.persistedServerRequests.get(requestId)
+      if (!current) continue
+      if (current.resolvedAtIso !== null || current.dismissedAtIso !== null) continue
+      this.persistedServerRequests.set(requestId, {
+        ...current,
+        dismissedAtIso: new Date().toISOString(),
+        dismissedReason: 'user_ignored_branch_block',
+        dismissedBy: 'user',
+      })
+      dismissedRequestIds.push(requestId)
+    }
+    if (dismissedRequestIds.length > 0) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    return dismissedRequestIds
+  }
+
   private resolvePendingServerRequest(requestId: number, reply: ServerRequestReply): void {
     const pendingRequest = this.pendingServerRequests.get(requestId)
     if (!pendingRequest) {
@@ -305,6 +1146,39 @@ class AppServerProcess {
     }
     this.pendingServerRequests.delete(requestId)
 
+    // Ensure the persisted approval ledger is updated even if the initial upsert
+    // has not yet completed. We use the available pendingRequest data to
+    // create or update the persisted record and mark it as resolved.
+    void (async () => {
+      await this.ensurePersistedServerRequestsLoaded()
+      const existing = this.persistedServerRequests.get(requestId)
+      const resolvedAtIso = new Date().toISOString()
+      const resolutionKind = reply.error ? ('rejected' as const) : ('resolved' as const)
+
+      if (existing) {
+        this.persistedServerRequests.set(requestId, {
+          ...existing,
+          resolvedAtIso,
+          resolutionKind,
+          dismissedAtIso: null,
+          dismissedReason: null,
+          dismissedBy: null,
+        })
+      } else {
+        const persisted = await this.toPersistedServerRequest(pendingRequest)
+        const current = this.persistedServerRequests.get(requestId)
+        this.persistedServerRequests.set(requestId, {
+          ...(current ?? persisted),
+          resolvedAtIso,
+          resolutionKind,
+          dismissedAtIso: null,
+          dismissedReason: null,
+          dismissedBy: null,
+        })
+      }
+
+      this.queuePersistedServerRequestsFlush()
+    })()
     this.sendServerRequestReply(requestId, reply)
     const requestParams = asRecord(pendingRequest.params)
     const threadId =
@@ -331,6 +1205,10 @@ class AppServerProcess {
       receivedAtIso: new Date().toISOString(),
     }
     this.pendingServerRequests.set(requestId, pendingRequest)
+    void (async () => {
+      const persisted = await this.toPersistedServerRequest(pendingRequest)
+      await this.upsertPersistedServerRequest(persisted)
+    })()
 
     this.emitNotification({
       method: 'server/request',
@@ -413,6 +1291,108 @@ class AppServerProcess {
 
   listPendingServerRequests(): PendingServerRequest[] {
     return Array.from(this.pendingServerRequests.values())
+  }
+
+  private async listPendingServerRequestsForWorkspace(cwd: string): Promise<{
+    requests: PendingServerRequest[]
+    hasUnresolvedScope: boolean
+  }> {
+    const targetCwd = resolve(cwd)
+    const requests = await Promise.all(Array.from(this.pendingServerRequests.values()).map(async (request) => {
+      const resolvedWorkspace = await this.resolveRequestWorkspace(request.params)
+      return { request, resolvedWorkspace }
+    }))
+    return {
+      requests: requests
+        .filter((row) => row.resolvedWorkspace.cwd === targetCwd)
+        .map((row) => row.request)
+        .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso)),
+      hasUnresolvedScope: requests.some((row) => row.resolvedWorkspace.unresolvedScope),
+    }
+  }
+
+  private async listPersistedServerRequestsForWorkspace(cwd: string): Promise<{
+    requests: PersistedServerRequest[]
+    hasUnresolvedScope: boolean
+  }> {
+    const targetCwd = resolve(cwd)
+    await this.ensurePersistedServerRequestsLoaded()
+    if (this.prunePersistedServerRequests()) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    let shouldFlush = false
+    const requests = await Promise.all(Array.from(this.persistedServerRequests.values()).map(async (request) => {
+      if (request.resolvedAtIso !== null || request.dismissedAtIso !== null) return null
+      const resolvedWorkspace = await this.resolveRequestWorkspace(request.params, request.threadId)
+      if (!request.cwd && resolvedWorkspace.cwd) {
+        this.persistedServerRequests.set(request.id, {
+          ...request,
+          cwd: resolvedWorkspace.cwd,
+        })
+        shouldFlush = true
+      }
+      return {
+        request,
+        resolvedWorkspace: {
+          cwd: request.cwd.trim() ? resolve(request.cwd) : resolvedWorkspace.cwd,
+          unresolvedScope: resolvedWorkspace.unresolvedScope,
+        },
+      }
+    }))
+    if (shouldFlush) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    return {
+      requests: requests
+        .filter((row): row is { request: PersistedServerRequest; resolvedWorkspace: ResolvedRequestWorkspace } => row !== null)
+        .filter((row) => row.resolvedWorkspace.cwd === targetCwd)
+        .map((row) => row.request)
+        .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso)),
+      hasUnresolvedScope: requests.some((row) => row?.resolvedWorkspace.unresolvedScope === true),
+    }
+  }
+
+  async getWorkspaceGuard(cwd: string): Promise<ServerSideWorkspaceGuard> {
+    const status = await readWorkspaceGitStatus(cwd)
+    if (!status.isRepo) {
+      return {
+        cwd: status.cwd,
+        isRepo: false,
+        blockedReasons: ['not_repo'],
+      }
+    }
+
+    const blockedReasons: ServerSideWorkspaceGuardBlockedReason[] = []
+    if (status.isDirty) {
+      blockedReasons.push('workspace_dirty')
+    }
+    const pendingRequests = await this.listPendingServerRequestsForWorkspace(status.cwd)
+    if (pendingRequests.requests.length > 0) {
+      blockedReasons.push('pending_server_requests')
+    }
+    const persistedRequests = await this.listPersistedServerRequestsForWorkspace(status.cwd)
+    if (persistedRequests.requests.length > 0) {
+      blockedReasons.push('persisted_server_requests')
+    }
+    if (pendingRequests.hasUnresolvedScope || persistedRequests.hasUnresolvedScope) {
+      blockedReasons.push('unresolved_server_request_scope')
+    }
+
+    return {
+      cwd: status.cwd,
+      isRepo: true,
+      blockedReasons,
+    }
+  }
+
+  async listPersistedServerRequests(): Promise<PersistedServerRequest[]> {
+    await this.ensurePersistedServerRequestsLoaded()
+    if (this.prunePersistedServerRequests()) {
+      this.queuePersistedServerRequestsFlush()
+    }
+    return Array.from(this.persistedServerRequests.values())
+      .filter((request) => request.resolvedAtIso === null && request.dismissedAtIso === null)
+      .sort((first, second) => first.receivedAtIso.localeCompare(second.receivedAtIso))
   }
 
   dispose(): void {
@@ -627,6 +1607,21 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/codex-api/server-requests/persisted') {
+        setJson(res, 200, { data: await appServer.listPersistedServerRequests() })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/server-requests/persisted/dismiss') {
+        const payload = await readJsonBody(req)
+        const body = asRecord(payload)
+        const requestIds = Array.isArray(body?.requestIds)
+          ? body.requestIds.filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+          : []
+        setJson(res, 200, { data: await appServer.dismissPersistedServerRequests(requestIds) })
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/codex-api/meta/methods') {
         const methods = await methodCatalog.listMethods()
         setJson(res, 200, { data: methods })
@@ -716,6 +1711,117 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
           setJson(res, 200, { diff: '', warning: message })
           return
         }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/workspace-diff-mode') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        const mode = normalizeWorkspaceDiffMode(url.searchParams.get('mode') ?? '')
+        const baseBranch = url.searchParams.get('baseBranch')
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+        if (!mode) {
+          setJson(res, 400, { error: 'Invalid query parameter: mode' })
+          return
+        }
+        try {
+          const snapshot = await collectWorkspaceDiffSnapshot(cwd, mode, { baseBranch })
+          setJson(res, 200, snapshot)
+          return
+        } catch (error) {
+          const message = getErrorMessage(error, 'Failed to collect workspace diff mode')
+          setJson(res, 200, {
+            mode,
+            cwd: resolve(cwd),
+            label: '',
+            baseRef: null,
+            targetRef: null,
+            warning: message,
+            files: [],
+            totalAdditions: 0,
+            totalDeletions: 0,
+          } satisfies WorkspaceDiffSnapshot)
+          return
+        }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/git/status') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+
+        const status = await readWorkspaceGitStatus(cwd)
+        setJson(res, 200, status)
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/codex-api/git/branches') {
+        const cwd = url.searchParams.get('cwd') ?? ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing query parameter: cwd' })
+          return
+        }
+
+        const branches = await readWorkspaceBranches(cwd)
+        setJson(res, 200, branches)
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/git/branch/switch') {
+        const payload = await readJsonBody(req)
+        const body = asRecord(payload)
+        const cwd = typeof body?.cwd === 'string' ? body.cwd : ''
+        const branch = typeof body?.branch === 'string' ? body.branch : ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing body field: cwd' })
+          return
+        }
+
+        try {
+          const guard = await appServer.getWorkspaceGuard(cwd)
+          if (guard.blockedReasons.length > 0) {
+            setJson(res, 409, {
+              error: 'Workspace branch action is blocked by current workspace state',
+              blockedReasons: guard.blockedReasons,
+            })
+            return
+          }
+          await switchWorkspaceBranch(cwd, branch)
+          setJson(res, 200, { ok: true })
+        } catch (error) {
+          setJson(res, 400, { error: getErrorMessage(error, 'Failed to switch branch') })
+        }
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/codex-api/git/branch/create-and-switch') {
+        const payload = await readJsonBody(req)
+        const body = asRecord(payload)
+        const cwd = typeof body?.cwd === 'string' ? body.cwd : ''
+        const branch = typeof body?.branch === 'string' ? body.branch : ''
+        if (!cwd.trim()) {
+          setJson(res, 400, { error: 'Missing body field: cwd' })
+          return
+        }
+
+        try {
+          const guard = await appServer.getWorkspaceGuard(cwd)
+          if (guard.blockedReasons.length > 0) {
+            setJson(res, 409, {
+              error: 'Workspace branch action is blocked by current workspace state',
+              blockedReasons: guard.blockedReasons,
+            })
+            return
+          }
+          await createAndSwitchWorkspaceBranch(cwd, branch)
+          setJson(res, 200, { ok: true })
+        } catch (error) {
+          setJson(res, 400, { error: getErrorMessage(error, 'Failed to create branch') })
+        }
+        return
       }
 
       if (req.method === 'GET' && url.pathname === '/codex-api/events') {

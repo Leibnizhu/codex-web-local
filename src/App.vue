@@ -112,6 +112,7 @@
         </ContentHeader>
 
         <section class="content-body">
+          <p v-if="error" class="content-error">{{ error }}</p>
           <template v-if="isHomeRoute">
             <div class="content-grid">
               <div class="new-thread-empty">
@@ -126,7 +127,12 @@
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
                 :is-turn-in-progress="false"
-                :thread-branch="selectedThread?.branch ?? ''"
+                :thread-branch="selectedWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
+                :workspace-model="selectedWorkspaceModel"
+                :workspace-branch-state="selectedWorkspaceBranchState"
+                :persisted-server-requests="selectedWorkspacePersistedServerRequests"
+                :global-live-request-count="globalLiveServerRequests.length"
+                :global-persisted-request-count="globalPersistedServerRequests.length"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -136,6 +142,10 @@
                 @update:selected-model="onSelectModel"
                 @update:selected-reasoning-effort="onSelectReasoningEffort"
                 @update:selected-chat-mode="setSelectedChatMode"
+                @refresh-branches="onRefreshWorkspaceBranches"
+                @switch-branch="onSwitchWorkspaceBranch"
+                @create-branch="onCreateWorkspaceBranch"
+                @dismiss-persisted-request="onDismissPersistedServerRequest"
                 @compact-context="onCompactContext" />
             </div>
           </template>
@@ -161,7 +171,11 @@
                 :panel="previewPanel"
                 :cwd="selectedThread?.cwd ?? ''"
                 :matched-file-diff="previewMatchedDiff"
+                :workspace-model="selectedWorkspaceModel"
+                :ui-language="uiLanguage"
                 :close-label="t('app.closeCodePreview')"
+                @change-workspace-mode="onChangeWorkspaceDiffMode"
+                @update-workspace-base-branch="onUpdateWorkspaceBaseBranch"
                 @close="onCloseFilePreview"
               />
             </div>
@@ -200,7 +214,12 @@
                 :selected-model="selectedModelId"
                 :selected-reasoning-effort="selectedReasoningEffort"
                 :selected-chat-mode="selectedChatMode"
-                :thread-branch="selectedThread?.branch ?? ''"
+                :thread-branch="selectedWorkspaceModel?.branch.currentBranch || selectedThread?.branch || ''"
+                :workspace-model="selectedWorkspaceModel"
+                :workspace-branch-state="selectedWorkspaceBranchState"
+                :persisted-server-requests="selectedWorkspacePersistedServerRequests"
+                :global-live-request-count="globalLiveServerRequests.length"
+                :global-persisted-request-count="globalPersistedServerRequests.length"
                 :context-usage="selectedThreadContextUsage"
                 :rate-limit-usage="selectedThreadRateLimitUsage"
                 :is-compacting-context="isCompactingSelectedThreadContext"
@@ -210,6 +229,10 @@
                 @update:selected-model="onSelectModel"
                 @update:selected-reasoning-effort="onSelectReasoningEffort"
                 @update:selected-chat-mode="setSelectedChatMode"
+                @refresh-branches="onRefreshWorkspaceBranches"
+                @switch-branch="onSwitchWorkspaceBranch"
+                @create-branch="onCreateWorkspaceBranch"
+                @dismiss-persisted-request="onDismissPersistedServerRequest"
                 @interrupt="onInterruptTurn"
                 @compact-context="onCompactContext" />
               </div>
@@ -237,8 +260,8 @@ import IconTablerX from './components/icons/IconTablerX.vue'
 import IconThemeMode from './components/icons/IconThemeMode.vue'
 import { useDesktopState } from './composables/useDesktopState'
 import { tUi, type UiLanguage, type UiTextKey } from './i18n/uiText'
-import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges } from './types/codex'
-import { fetchFilePreview, fetchWorkspaceChanges } from './api/codexGateway'
+import type { ComposerSubmitPayload, ReasoningEffort, ThreadScrollState, UiTurnFileChanges, UiWorkspaceDiffMode } from './types/codex'
+import { fetchFilePreview } from './api/codexGateway'
 import {
   normalizePathSeparators,
   getBasename,
@@ -256,8 +279,14 @@ const {
   selectedThread,
   selectedThreadScrollState,
   selectedThreadServerRequests,
+  selectedWorkspacePersistedServerRequests,
+  globalLiveServerRequests,
+  globalPersistedServerRequests,
+  selectedWorkspaceModel,
+  selectedWorkspaceDiffTotals,
   selectedThreadFileChanges,
   selectedQueuedMessages,
+  selectedWorkspaceBranchState,
   selectedThreadContextUsage,
   selectedThreadRateLimitUsage,
   isCompactingSelectedThreadContext,
@@ -284,10 +313,19 @@ const {
   sendMessageToNewThread,
   interruptSelectedThreadTurn,
   compactSelectedThreadContext,
+  refreshSelectedWorkspaceBranchState,
+  refreshSelectedWorkspaceDiffTotals,
+  fetchWorkspaceDiffSnapshotForMode,
+  openPreferredWorkspaceDiffSnapshot,
+  setWorkspaceDiffMode,
+  setWorkspaceBaseBranch,
+  switchSelectedWorkspaceBranch,
+  createAndSwitchSelectedWorkspaceBranch,
   setSelectedModelId,
   setSelectedReasoningEffort,
   setSelectedChatMode,
   respondToPendingServerRequest,
+  dismissPersistedServerRequests,
   renameProject,
   removeProject,
   reorderProject,
@@ -311,8 +349,8 @@ const sidebarSearchQuery = ref('')
 const isSidebarSearchVisible = ref(false)
 const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
 const previewPanel = ref<PreviewPanelState | null>(null)
-const workspaceDiffTotals = ref({ additions: 0, deletions: 0 })
 const isCreatingThreadFromHome = ref(false)
+const workspaceDiffTotals = computed(() => selectedWorkspaceDiffTotals.value)
 
 const routeThreadId = computed(() => {
   const rawThreadId = route.params.threadId
@@ -517,6 +555,10 @@ function onRespondServerRequest(payload: { id: number; result?: unknown; error?:
   void respondToPendingServerRequest(payload)
 }
 
+function onDismissPersistedServerRequest(requestId: number): void {
+  void dismissPersistedServerRequests([requestId])
+}
+
 function onToggleAutoRefreshTimer(): void {
   toggleAutoRefreshTimer()
 }
@@ -586,6 +628,24 @@ function onInterruptTurn(): void {
 
 function onCompactContext(): void {
   void compactSelectedThreadContext()
+}
+
+function onRefreshWorkspaceBranches(): void {
+  void refreshSelectedWorkspaceBranchState({ includeBranches: true, silent: false })
+}
+
+async function onSwitchWorkspaceBranch(branch: string): Promise<void> {
+  const didSwitch = await switchSelectedWorkspaceBranch(branch)
+  if (!didSwitch) return
+  previewPanel.value = null
+  await refreshSelectedWorkspaceDiffTotals()
+}
+
+async function onCreateWorkspaceBranch(branch: string): Promise<void> {
+  const didCreate = await createAndSwitchSelectedWorkspaceBranch(branch)
+  if (!didCreate) return
+  previewPanel.value = null
+  await refreshSelectedWorkspaceDiffTotals()
 }
 
 function formatQueuedAtTime(value: string): string {
@@ -668,49 +728,41 @@ async function onOpenWorkspaceDiff(): Promise<void> {
 
   const cwd = selectedThread.value?.cwd?.trim() ?? ''
   if (!cwd) return
-  try {
-    const changes = await fetchWorkspaceChanges(cwd)
-    const normalizedChanges: UiTurnFileChanges = changes ?? {
-      turnId: '__workspace__',
-      files: [],
-      totalAdditions: 0,
-      totalDeletions: 0,
-    }
-    const expandedPaths: Record<string, boolean> = {}
-    if (normalizedChanges.files.length > 0) {
-      expandedPaths[normalizedChanges.files[0].path] = true
-    }
-    previewPanel.value = {
-      kind: 'workspace',
-      cwd,
-      changes: normalizedChanges,
-      expandedPaths,
-    }
-  } catch {
-    previewPanel.value = null
+  const preferredMode = selectedWorkspaceModel.value?.diff.selectedMode ?? ''
+  if (preferredMode && preferredMode !== 'unstaged') {
+    await openWorkspaceDiffPanel(cwd, preferredMode)
+    return
+  }
+
+  const snapshot = await openPreferredWorkspaceDiffSnapshot(cwd)
+  if (!snapshot) return
+  previewPanel.value = {
+    kind: 'workspace',
+    cwd,
   }
 }
 
-
-
-async function refreshWorkspaceDiffTotals(): Promise<void> {
-  const cwd = selectedThread.value?.cwd?.trim() ?? ''
-  if (!cwd) {
-    workspaceDiffTotals.value = { additions: 0, deletions: 0 }
-    return
+async function openWorkspaceDiffPanel(cwd: string, mode: UiWorkspaceDiffMode): Promise<void> {
+  const snapshot = await fetchWorkspaceDiffSnapshotForMode(cwd, mode)
+  setWorkspaceDiffMode(cwd, snapshot.mode)
+  previewPanel.value = {
+    kind: 'workspace',
+    cwd,
   }
-  try {
-    const changes = await fetchWorkspaceChanges(cwd)
-    if (!changes) {
-      workspaceDiffTotals.value = { additions: 0, deletions: 0 }
-      return
-    }
-    workspaceDiffTotals.value = {
-      additions: changes.totalAdditions,
-      deletions: changes.totalDeletions,
-    }
-  } catch {
-    workspaceDiffTotals.value = { additions: 0, deletions: 0 }
+}
+
+async function onChangeWorkspaceDiffMode(mode: UiWorkspaceDiffMode): Promise<void> {
+  const cwd = selectedThread.value?.cwd?.trim() ?? ''
+  if (!cwd) return
+  await openWorkspaceDiffPanel(cwd, mode)
+}
+
+async function onUpdateWorkspaceBaseBranch(branch: string): Promise<void> {
+  const cwd = selectedThread.value?.cwd?.trim() ?? ''
+  if (!cwd) return
+  setWorkspaceBaseBranch(cwd, branch.trim() || null)
+  if (previewPanel.value?.kind === 'workspace') {
+    await openWorkspaceDiffPanel(cwd, 'branch')
   }
 }
 
@@ -784,7 +836,7 @@ async function initialize(): Promise<void> {
   await refreshAll()
   hasInitialized.value = true
   await syncThreadSelectionWithRoute()
-  await refreshWorkspaceDiffTotals()
+  await refreshSelectedWorkspaceDiffTotals()
   startPolling()
 }
 
@@ -857,7 +909,7 @@ watch(
   () => selectedThreadId.value,
   () => {
     previewPanel.value = null
-    void refreshWorkspaceDiffTotals()
+    void refreshSelectedWorkspaceDiffTotals()
   },
 )
 
@@ -889,7 +941,7 @@ watch(
 watch(
   () => selectedThreadFileChanges.value?.turnId ?? '',
   () => {
-    void refreshWorkspaceDiffTotals()
+    void refreshSelectedWorkspaceDiffTotals()
   },
 )
 

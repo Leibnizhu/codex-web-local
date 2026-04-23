@@ -96,6 +96,238 @@ const UI_TEXT = {
     zh: '分支',
     en: 'Branch',
   },
+  'composer.branchMenuTitle': {
+    zh: '切换或创建分支',
+    en: 'Switch or create branch',
+  },
+  'composer.branchWorkspaceHint': {
+    zh: '分支操作会作用于当前工作区',
+    en: 'Branch actions apply to the current workspace',
+  },
+  'composer.branchLoading': {
+    zh: '正在读取分支...',
+    en: 'Loading branches...',
+  },
+  'composer.branchCurrent': {
+    zh: '当前',
+    en: 'Current',
+  },
+  'composer.branchEmpty': {
+    zh: '当前工作区没有可切换的本地分支',
+    en: 'No local branches available',
+  },
+  'composer.branchCreatePlaceholder': {
+    zh: '输入新分支名',
+    en: 'New branch name',
+  },
+  'composer.branchCreate': {
+    zh: '创建并切换',
+    en: 'Create & switch',
+  },
+  'composer.branchSwitching': {
+    zh: '切换中...',
+    en: 'Switching...',
+  },
+  'composer.branchBlockedNotRepo': {
+    zh: '当前目录不是 Git 仓库',
+    en: 'Current folder is not a Git repository',
+  },
+  'composer.branchBlockedDirty': {
+    zh: '工作区有未提交改动',
+    en: 'Workspace has uncommitted changes',
+  },
+  'composer.branchBlockedInProgress': {
+    zh: '有线程仍在执行中',
+    en: 'A thread is still running',
+  },
+  'composer.branchBlockedQueued': {
+    zh: '有排队中的消息待发送',
+    en: 'Queued messages are pending',
+  },
+  'composer.branchBlockedPendingRequests': {
+    zh: '有待处理的审批请求',
+    en: 'Pending approval requests exist',
+  },
+  'composer.branchBlockedPersistedRequests': {
+    zh: '检测到未闭合审批记录',
+    en: 'Detected unresolved approval records',
+  },
+  'composer.branchGlobalRequestsHint': {
+    zh: '当前会话存在未归属到此工作区的审批请求或记录，请先留意处理。',
+    en: 'This session has approval requests or records that are not scoped to the current workspace.',
+  },
+  'composer.branchPersistedRecordsTitle': {
+    zh: '未闭合审批记录',
+    en: 'Unresolved approval records',
+  },
+  'composer.branchPersistedRecordReceivedAt': {
+    zh: ({ time }) => `记录于 ${String(time)}`,
+    en: ({ time }) => `Recorded at ${String(time)}`,
+  },
+  'composer.branchPersistedRecordDismiss': {
+    zh: '忽略阻塞',
+    en: 'Ignore block',
+  },
+  'composer.branchPersistedRecordDismissConfirm': {
+    zh: '这只会忽略本地未闭合审批记录对分支切换的阻塞，不会处理实时审批。是否继续？',
+    en: 'This only ignores the local blocking record for branch switching and will not resolve any live approval. Continue?',
+  },
+  'diffPanel.title': {
+    zh: '差异面板',
+    en: 'Diff panel',
+  },
+  'diffPanel.filesUnit': {
+    zh: '个文件',
+    en: 'files',
+  },
+  'diffPanel.mode.unstaged': {
+    zh: '未暂存',
+    en: 'Unstaged',
+  },
+  'diffPanel.mode.staged': {
+    zh: '已暂存',
+    en: 'Staged',
+  },
+  'diffPanel.mode.branch': {
+    zh: '全部分支更改',
+    en: 'Branch changes',
+  },
+  'diffPanel.mode.lastCommit': {
+    zh: '上一轮更改',
+    en: 'Last commit',
+  },
+  'diffPanel.mode.gitStatus': {
+    zh: 'Git 状态',
+    en: 'Git status',
+  },
+  'diffPanel.desc.unstaged': {
+    zh: '显示当前工作区尚未暂存的内容差异。',
+    en: 'Shows unstaged content differences in the current workspace.',
+  },
+  'diffPanel.desc.staged': {
+    zh: '显示当前工作区已暂存但尚未提交的内容差异。',
+    en: 'Shows staged but uncommitted content differences in the current workspace.',
+  },
+  'diffPanel.desc.branch': {
+    zh: '显示当前分支相对基线分支的累计改动。',
+    en: 'Shows cumulative changes on the current branch relative to the base branch.',
+  },
+  'diffPanel.desc.lastCommit': {
+    zh: '显示最近一次提交的内容差异。',
+    en: 'Shows the content differences from the most recent commit.',
+  },
+  'diffPanel.desc.gitStatus': {
+    zh: '显示当前工作区的 Git 状态与阻塞原因。',
+    en: 'Shows the current Git states and blockers for the workspace.',
+  },
+  'diffPanel.baseBranchLabel': {
+    zh: '基线分支',
+    en: 'Base branch',
+  },
+  'diffPanel.baseBranchAuto': {
+    zh: '自动选择',
+    en: 'Auto',
+  },
+  'diffPanel.baseBranchConfigured': {
+    zh: ({ branch }) => `当前配置基线：${String(branch)}`,
+    en: ({ branch }) => `Configured base: ${String(branch)}`,
+  },
+  'diffPanel.baseBranchInferred': {
+    zh: ({ branch }) => `自动推导基线：${String(branch)}`,
+    en: ({ branch }) => `Inferred base: ${String(branch)}`,
+  },
+  'diffPanel.empty.noChanges': {
+    zh: '当前模式下没有可显示的差异。',
+    en: 'No differences are available for this mode.',
+  },
+  'diffPanel.empty.branchBaseMissing': {
+    zh: '未能从当前仓库的本地 Git 信息推导比较基线，暂时无法计算全部分支更改。',
+    en: 'A comparison base could not be inferred from local Git metadata, so branch changes cannot be computed yet.',
+  },
+  'diffPanel.empty.warning': {
+    zh: '当前模式无法稳定生成差异，请查看提示信息。',
+    en: 'The selected mode could not produce a stable diff. See the warning for details.',
+  },
+  'diffPanel.gitStatusCurrentBranch': {
+    zh: ({ branch }) => `当前分支：${String(branch)}`,
+    en: ({ branch }) => `Current branch: ${String(branch)}`,
+  },
+  'diffPanel.gitStatusBlockersTitle': {
+    zh: '当前阻塞原因',
+    en: 'Current blockers',
+  },
+  'diffPanel.gitStatusEmpty': {
+    zh: '当前工作区没有额外的 Git 状态条目。',
+    en: 'No additional Git state entries were found for this workspace.',
+  },
+  'diffPanel.gitStatusTagStaged': {
+    zh: '已暂存',
+    en: 'Staged',
+  },
+  'diffPanel.gitStatusTagUnstaged': {
+    zh: '未暂存',
+    en: 'Unstaged',
+  },
+  'diffPanel.gitStatusKind.modified': {
+    zh: '已修改',
+    en: 'Modified',
+  },
+  'diffPanel.gitStatusKind.added': {
+    zh: '新增',
+    en: 'Added',
+  },
+  'diffPanel.gitStatusKind.deleted': {
+    zh: '删除',
+    en: 'Deleted',
+  },
+  'diffPanel.gitStatusKind.renamed': {
+    zh: '重命名',
+    en: 'Renamed',
+  },
+  'diffPanel.gitStatusKind.untracked': {
+    zh: '未跟踪',
+    en: 'Untracked',
+  },
+  'diffPanel.gitStatusKind.conflicted': {
+    zh: '冲突',
+    en: 'Conflicted',
+  },
+  'diffPanel.gitStatusKind.unknown': {
+    zh: '未知',
+    en: 'Unknown',
+  },
+  'composer.branchDirtyTrackedModified': {
+    zh: ({ count }) => `已修改 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} modified`,
+  },
+  'composer.branchDirtyStaged': {
+    zh: ({ count }) => `已暂存 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} staged`,
+  },
+  'composer.branchDirtyUntracked': {
+    zh: ({ count }) => `未跟踪 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} untracked`,
+  },
+  'composer.branchDirtyConflicted': {
+    zh: ({ count }) => `冲突 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} conflicted`,
+  },
+  'composer.branchDirtyRenamed': {
+    zh: ({ count }) => `重命名 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} renamed`,
+  },
+  'composer.branchDirtyDeleted': {
+    zh: ({ count }) => `删除 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} deleted`,
+  },
+  'composer.branchDirtyEntriesTitle': {
+    zh: '涉及文件',
+    en: 'Affected files',
+  },
+  'composer.branchDirtyEntriesMore': {
+    zh: ({ count }) => `另有 ${String(count)} 项`,
+    en: ({ count }) => `${String(count)} more`,
+  },
   'composer.quotaRemaining': {
     zh: ({ percent }) => `${String(percent)}% 额度`,
     en: ({ percent }) => `${String(percent)}% quota`,
