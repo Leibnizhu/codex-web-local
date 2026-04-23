@@ -31,6 +31,7 @@ Options:
   -d, --daemon         run in background (daemon mode)
   --password <pass>    set a specific password
   --no-password        disable password protection
+  -V, --version        output the version number
   -h, --help           display help for command
 ```
 
@@ -59,6 +60,9 @@ codex-web-local --host 0.0.0.0
 
 # Tailscale setup in daemon mode (background)
 codex-web-local --host "$(tailscale ip -4)" --port 3000 --daemon
+
+# Show current CLI version
+codex-web-local --version
 ```
 
 ### Dev Commands (Vite)
@@ -75,6 +79,7 @@ npm run dev -- --host 0.0.0.0 --daemon
 ```
 
 When started with password protection (default), the server prints the password to the console. Open the URL in your browser, enter the password, and you're in.
+The CLI also checks npm for new versions automatically at startup (at most once every 12 hours).
 
 ## UI Highlights
 

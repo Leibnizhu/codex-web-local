@@ -31,6 +31,7 @@ Options:
   -d, --daemon         后台运行（守护进程模式）
   --password <pass>    设置固定访问密码
   --no-password        关闭密码保护
+  -V, --version        输出版本号
   -h, --help           显示帮助
 ```
 
@@ -59,6 +60,9 @@ codex-web-local --host 0.0.0.0
 
 # Tailscale 场景 + 后台运行
 codex-web-local --host "$(tailscale ip -4)" --port 3000 --daemon
+
+# 查看当前 CLI 版本
+codex-web-local --version
 ```
 
 ### 开发命令（Vite）
@@ -75,6 +79,7 @@ npm run dev -- --host 0.0.0.0 --daemon
 ```
 
 默认开启密码保护时，服务会在控制台打印密码。浏览器打开 URL 后输入密码即可访问。
+CLI 启动时会自动检查 npm 是否有新版本（最多每 12 小时检查一次）。
 
 ## 界面与交互更新
 
